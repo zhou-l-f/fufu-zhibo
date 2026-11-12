@@ -1,0 +1,22 @@
+# 文本类：仓库保存LF，检出时跟随git autocrlf策略
+*.java text
+*.yml text
+*.yaml text
+*.xml text
+*.properties text
+*.md text
+*.txt text
+*.html text
+*.css text
+*.js text
+
+# 二进制文件，禁止换行转换、禁止文本diff
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.bmp binary
+*.jar binary
+*.zip binary
+*.pdf binary
+*.exe binary
