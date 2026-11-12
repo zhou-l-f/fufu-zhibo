@@ -1,0 +1,39 @@
+server:
+  port: 8080
+
+spring:
+  profiles:
+    active: dev
+  main:
+    allow-circular-references: true
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${fufu.datasource.host}:${fufu.datasource.port}/${fufu.datasource.database}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: ${fufu.datasource.username}
+    password: ${fufu.datasource.password}
+  data:
+    redis:
+      host: ${fufu.redis.host}
+      port: ${fufu.redis.port}
+      database: ${fufu.redis.database}
+  jackson:
+    time-zone: Asia/Shanghai
+    date-format: yyyy-MM-dd HH:mm:ss
+
+mybatis-plus:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.zlf.fufuzhibo.entity
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+# 自定义配置前缀 fufu
+fufu:
+  jwt:
+    secret-key: ${fufu.jwt.secret-key}
+    expire-time: ${fufu.jwt.expire-time}
+    token-name: ${fufu.jwt.token-name}
+
+  crypto:
+    aes-key: ${fufu.crypto.aes-key}
+    hmac-key: ${fufu.crypto.hmac-key}
