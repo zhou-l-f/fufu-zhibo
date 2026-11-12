@@ -27,6 +27,9 @@ mybatis-plus:
     map-underscore-to-camel-case: true
     log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
 
+knife4j:
+  banner: false
+
 # 自定义配置前缀 fufu
 fufu:
   jwt:
