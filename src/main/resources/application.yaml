@@ -30,13 +30,34 @@ mybatis-plus:
 knife4j:
   banner: false
 
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+
+management:
+  health:
+    rabbit:
+      enabled: false
+    redis:
+      enabled: false
+
 # 自定义配置前缀 fufu
 fufu:
   jwt:
-    secret-key: ${fufu.jwt.secret-key}
-    expire-time: ${fufu.jwt.expire-time}
-    token-name: ${fufu.jwt.token-name}
+    admin-secret-key: ${fufu.jwt.admin-secret-key}
+    admin-expire-time: ${fufu.jwt.admin-expire-time}
+    admin-token-name: ${fufu.jwt.admin-token-name}
+
+    user-secret-key: ${fufu.jwt.user-secret-key}
+    user-expire-time: ${fufu.jwt.user-expire-time}
+    user-token-name: ${fufu.jwt.user-token-name}
 
   crypto:
     aes-key: ${fufu.crypto.aes-key}
     hmac-key: ${fufu.crypto.hmac-key}
+
+  wechat:
+    appid: ${fufu.wechat.appid}
+    secret: ${fufu.wechat.secret}
