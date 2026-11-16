@@ -18,6 +18,12 @@ public class UserIdentity {
     @TableField("real_name")
     private String realName;
 
+    @TableField("phone_enc")
+    private byte[] phoneEnc;
+
+    @TableField("phone_hash")
+    private String phoneHash;
+
     @TableField("id_card_enc")
     private byte[] idCardEnc;
 

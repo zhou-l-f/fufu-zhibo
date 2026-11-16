@@ -12,20 +12,16 @@ public class User {
     @TableId(value = "id", type = IdType.AUTO)
     private Long id;
 
-    private String openid;
-
     private String name;
+
+    private String username;
+
+    private String password;
 
     @TableField("avatar_url")
     private String avatarUrl;
 
     private Integer gender;
-
-    @TableField("phone_enc")
-    private byte[] phoneEnc;
-
-    @TableField("phone_hash")
-    private String phoneHash;
 
     private Integer status;
 
@@ -35,5 +31,6 @@ public class User {
     @TableField(value = "create_time", fill = FieldFill.INSERT)
     private LocalDateTime createTime;
 
+    @TableField(value = "update_time", fill = FieldFill.INSERT_UPDATE)
     private LocalDateTime updateTime;
 }

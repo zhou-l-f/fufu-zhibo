@@ -8,5 +8,5 @@ import org.apache.ibatis.annotations.Select;
 public interface AdminMapper {
 
     @Select("select * from admin where username = #{username}")
-    Admin getByusername(String username);
+    Admin getByUsername(String username);
 }

@@ -4,6 +4,8 @@ import com.zlf.fufuzhibo.common.constant.MessageConstant;
 import com.zlf.fufuzhibo.common.exception.BaseException;
 import com.zlf.fufuzhibo.common.result.Result;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.support.DefaultMessageSourceResolvable;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -22,13 +24,22 @@ public class GlobalExceptionHandler {
      * @return
      */
     @ExceptionHandler
-    public Result exceptionHandler(BaseException ex){
+    public Result<String> exceptionHandler(BaseException ex){
         log.error("异常信息：{}", ex.getMessage());
         return Result.error(ex.getMessage());
     }
 
     @ExceptionHandler
-    public Result exceptionHandler(SQLIntegrityConstraintViolationException ex){
+    public Result<String> exceptionHandler(MethodArgumentNotValidException ex){
+        String message = ex.getBindingResult().getFieldErrors().stream()
+                .findFirst()
+                .map(DefaultMessageSourceResolvable::getDefaultMessage)
+                .orElse(MessageConstant.UNKNOWN_ERROR);
+        return Result.error(message);
+    }
+
+    @ExceptionHandler
+    public Result<String> exceptionHandler(SQLIntegrityConstraintViolationException ex){
         String message = ex.getMessage();
         if(message.contains("Duplicate entry")) {
             String[] split = message.split(" ");

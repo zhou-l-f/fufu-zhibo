@@ -34,6 +34,7 @@ public class SecurityConfig {
                         // ===== 登录接口放行，必须放在 hasRole 之前 =====
                         .requestMatchers(HttpMethod.POST, "/admin/admin/login").permitAll()
                         .requestMatchers(HttpMethod.POST, "/user/user/login").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/user/user/register").permitAll()
 
                         // ===== 文档与健康检查放行 =====
                         .requestMatchers(

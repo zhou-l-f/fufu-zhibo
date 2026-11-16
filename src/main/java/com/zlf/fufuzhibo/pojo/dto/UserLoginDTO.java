@@ -8,6 +8,9 @@ import lombok.Data;
 @Schema(name = "UserLoginDTO", description = "用户登录DTO")
 public class UserLoginDTO {
 
-    @NotBlank(message = "登录凭证不能为空")
-    private String code;
+    @NotBlank(message = "账号不能为空")
+    private String username;
+
+    @NotBlank(message = "密码不能为空")
+    private String password;
 }

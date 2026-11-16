@@ -57,7 +57,3 @@ fufu:
   crypto:
     aes-key: ${fufu.crypto.aes-key}
     hmac-key: ${fufu.crypto.hmac-key}
-
-  wechat:
-    appid: ${fufu.wechat.appid}
-    secret: ${fufu.wechat.secret}

@@ -32,7 +32,7 @@ public class AdminServicelmpl implements AdminService {
     public Admin login(AdminLoginDTO adminLoginDTO) {
 
         String username = adminLoginDTO.getUsername();
-        Admin admin = adminMapper.getByusername(username);
+        Admin admin = adminMapper.getByUsername(username);
         if(admin == null){
             throw new AccountNotFoundException(MessageConstant.ACCOUNT_NOT_FOUND);
         }
