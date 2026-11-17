@@ -36,6 +36,9 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/user/user/login").permitAll()
                         .requestMatchers(HttpMethod.POST, "/user/user/register").permitAll()
 
+                        .requestMatchers(HttpMethod.POST, "/srs/on_publish").permitAll() // SRS 推流测试回调放行
+                        .requestMatchers(HttpMethod.POST, "/srs/on_unpublish").permitAll() // SRS 断流测试回调放行
+
                         // ===== 文档与健康检查放行 =====
                         .requestMatchers(
                                 "/doc.html",
