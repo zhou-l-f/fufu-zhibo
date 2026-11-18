@@ -39,6 +39,10 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/srs/on_publish").permitAll() // SRS 推流测试回调放行
                         .requestMatchers(HttpMethod.POST, "/srs/on_unpublish").permitAll() // SRS 断流测试回调放行
 
+                        // ===== 匿名浏览接口放行：直播中房间列表与详情 =====
+                        .requestMatchers(HttpMethod.GET, "/public/live-rooms").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/public/live-rooms/**").permitAll()
+
                         // ===== 文档与健康检查放行 =====
                         .requestMatchers(
                                 "/doc.html",

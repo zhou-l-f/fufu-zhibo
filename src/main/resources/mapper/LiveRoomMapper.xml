@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.zlf.fufuzhibo.server.mapper.LiveRoomMapper">
+
+    <!-- 正在直播的条件：场次直播中，且直播间未被封禁 -->
+    <sql id="liveRoomCondition">
+        s.status = 1
+        AND r.status &lt;&gt; 2
+    </sql>
+
+    <select id="selectLiveRoomPage"
+            resultType="com.zlf.fufuzhibo.pojo.vo.LiveRoomItemVO">
+        SELECT
+            r.id AS roomId,
+            s.id AS sessionId,
+            s.title AS title,
+            s.cover_url AS coverUrl,
+            s.stream_name AS streamName,
+            u.`name` AS anchorName,
+            s.start_time AS startTime
+        FROM live_session s
+        INNER JOIN live_room r ON r.id = s.room_id
+        INNER JOIN `user` u ON u.id = r.user_id
+        WHERE
+        <include refid="liveRoomCondition"/>
+        ORDER BY s.start_time DESC, s.id DESC
+    </select>
+
+    <select id="selectLiveRoomDetail"
+            resultType="com.zlf.fufuzhibo.pojo.vo.LiveRoomDetailVO">
+        SELECT
+            r.id AS roomId,
+            s.id AS sessionId,
+            s.title AS title,
+            s.cover_url AS coverUrl,
+            s.stream_name AS streamName,
+            u.`name` AS anchorName,
+            s.start_time AS startTime
+        FROM live_room r
+        INNER JOIN live_session s ON s.room_id = r.id
+        INNER JOIN `user` u ON u.id = r.user_id
+        WHERE r.id = #{roomId}
+          AND
+        <include refid="liveRoomCondition"/>
+        LIMIT 1
+    </select>
+
+</mapper>
