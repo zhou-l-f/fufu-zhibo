@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.zlf.fufuzhibo.server.mapper.LiveMessageMapper">
+
+    <select id="selectHistory"
+            resultType="com.zlf.fufuzhibo.pojo.vo.ChatMessageVO">
+        SELECT
+            m.id AS id,
+            m.room_id AS roomId,
+            m.session_id AS sessionId,
+            m.user_id AS userId,
+            u.`name` AS userName,
+            u.avatar_url AS avatarUrl,
+            m.content AS content,
+            m.create_time AS createTime
+        FROM live_message m
+        INNER JOIN `user` u ON u.id = m.user_id
+        WHERE m.room_id = #{roomId}
+          AND m.status = 1
+        <if test="lastId != null">
+            AND m.id &lt; #{lastId}
+        </if>
+        ORDER BY m.id DESC
+        LIMIT #{size}
+    </select>
+
+</mapper>

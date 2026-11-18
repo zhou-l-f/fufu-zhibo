@@ -35,4 +35,9 @@ public class MessageConstant {
     public static final String IMAGE_TOO_LARGE = "图片大小不能超过 5MB";
     public static final String FILE_DIR_INVALID = "上传目录不合法";
     public static final String FILE_UPLOAD_FAILED = "文件上传失败";
+    public static final String CHAT_CONTENT_EMPTY = "消息内容不能为空";
+    public static final String CHAT_CONTENT_TOO_LONG = "消息内容不能超过 %d 个字符";
+    public static final String CHAT_TOO_FREQUENT = "发言过于频繁，请稍后再试";
+    public static final String CHAT_TYPE_UNSUPPORTED = "不支持的消息类型";
+    public static final String CHAT_SEND_FAILED = "消息发送失败，请稍后重试";
 }

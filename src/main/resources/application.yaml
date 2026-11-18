@@ -68,6 +68,13 @@ fufu:
     reconnect-grace-seconds: ${fufu.push.reconnect-grace-seconds}
     end-grace-seconds: ${fufu.push.end-grace-seconds:30}
 
+  chat:
+    recent-size: ${fufu.chat.recent-size:100}
+    init-size: ${fufu.chat.init-size:50}
+    rate-limit-seconds: ${fufu.chat.rate-limit-seconds:2}
+    max-length: ${fufu.chat.max-length:100}
+    cache-hours: ${fufu.chat.cache-hours:6}
+
   srs:
     callback-secret: ${fufu.srs.callback-secret}
     rtmp-host: ${fufu.srs.rtmp-host}

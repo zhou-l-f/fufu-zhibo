@@ -45,6 +45,9 @@ public class SecurityConfig {
                         // SRS 全部回调放行（推流/断流/播放/停止），回调内部用 secret 校验
                         .requestMatchers("/srs/**").permitAll()
 
+                        // ===== 直播间聊天 WebSocket 放行，握手阶段由拦截器校验用户 token =====
+                        .requestMatchers("/ws/**").permitAll()
+
                         // ===== 匿名浏览接口放行：直播中房间列表与详情 =====
                         .requestMatchers(HttpMethod.GET, "/public/live-rooms").permitAll()
                         .requestMatchers(HttpMethod.GET, "/public/live-rooms/**").permitAll()
