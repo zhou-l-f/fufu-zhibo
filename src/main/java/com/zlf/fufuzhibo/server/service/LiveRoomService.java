@@ -2,6 +2,7 @@ package com.zlf.fufuzhibo.server.service;
 
 import com.zlf.fufuzhibo.pojo.dto.StartLiveDTO;
 import com.zlf.fufuzhibo.pojo.vo.LiveRoomVO;
+import com.zlf.fufuzhibo.pojo.vo.MyLiveRoomVO;
 import com.zlf.fufuzhibo.pojo.vo.StartLiveVO;
 
 /**
@@ -25,4 +26,12 @@ public interface LiveRoomService {
      * @return 推流地址与播放地址
      */
     StartLiveVO startLive(Long userId, StartLiveDTO dto);
+
+    /**
+     * 查询当前用户的直播间与进行中的场次
+     *
+     * @param userId 当前登录用户 id
+     * @return 直播间信息；未创建直播间时 hasRoom=false
+     */
+    MyLiveRoomVO getMyRoom(Long userId);
 }

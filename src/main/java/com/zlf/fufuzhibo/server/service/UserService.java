@@ -5,8 +5,17 @@ import com.zlf.fufuzhibo.pojo.dto.UserLoginDTO;
 import com.zlf.fufuzhibo.pojo.dto.UserProfileDTO;
 import com.zlf.fufuzhibo.pojo.dto.UserRegisterDTO;
 import com.zlf.fufuzhibo.pojo.vo.UserLoginVO;
+import com.zlf.fufuzhibo.pojo.vo.UserProfileVO;
 
 public interface UserService {
+
+    /**
+     * 查询当前登录用户资料
+     *
+     * @param userId 当前登录用户 id
+     * @return 用户资料，包含是否已实名
+     */
+    UserProfileVO getProfile(Long userId);
 
     /**
      * 用户登录，校验通过后签发 JWT 令牌

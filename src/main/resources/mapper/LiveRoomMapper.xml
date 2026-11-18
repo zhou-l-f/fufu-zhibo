@@ -4,12 +4,6 @@
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.zlf.fufuzhibo.server.mapper.LiveRoomMapper">
 
-    <!-- 正在直播的条件：场次直播中，且直播间未被封禁 -->
-    <sql id="liveRoomCondition">
-        s.status = 1
-        AND r.status &lt;&gt; 2
-    </sql>
-
     <select id="selectLiveRoomPage"
             resultType="com.zlf.fufuzhibo.pojo.vo.LiveRoomItemVO">
         SELECT
@@ -23,8 +17,8 @@
         FROM live_session s
         INNER JOIN live_room r ON r.id = s.room_id
         INNER JOIN `user` u ON u.id = r.user_id
-        WHERE
-        <include refid="liveRoomCondition"/>
+        WHERE s.status = 1
+          AND r.status &lt;&gt; 2
         ORDER BY s.start_time DESC, s.id DESC
     </select>
 
@@ -42,8 +36,8 @@
         INNER JOIN live_session s ON s.room_id = r.id
         INNER JOIN `user` u ON u.id = r.user_id
         WHERE r.id = #{roomId}
-          AND
-        <include refid="liveRoomCondition"/>
+          AND s.status = 1
+          AND r.status &lt;&gt; 2
         LIMIT 1
     </select>
 

@@ -7,6 +7,7 @@ import com.zlf.fufuzhibo.pojo.dto.UserLoginDTO;
 import com.zlf.fufuzhibo.pojo.dto.UserProfileDTO;
 import com.zlf.fufuzhibo.pojo.dto.UserRegisterDTO;
 import com.zlf.fufuzhibo.pojo.vo.UserLoginVO;
+import com.zlf.fufuzhibo.pojo.vo.UserProfileVO;
 import com.zlf.fufuzhibo.server.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -14,6 +15,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -57,6 +59,18 @@ public class UserController {
         log.info("用户实名认证: userId={}", userId);
         userService.verify(userIdentityDTO, userId);
         return Result.success();
+    }
+
+    /**
+     * 查询当前登录用户资料：昵称、头像、性别、账号状态与实名状态
+     */
+    @Operation(summary = "查询当前用户资料",
+            description = "根据 token 返回当前登录用户的账号、昵称、性别、头像、账号状态以及是否已完成实名认证，用于前端刷新后恢复用户状态。")
+    @GetMapping("/users/me")
+    public Result<UserProfileVO> getProfile() {
+        Long userId = SecurityUtil.currentUserId();
+        log.info("查询用户资料: userId={}", userId);
+        return Result.success(userService.getProfile(userId));
     }
 
     /**

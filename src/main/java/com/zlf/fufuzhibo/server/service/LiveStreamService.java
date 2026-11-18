@@ -24,6 +24,13 @@ public interface LiveStreamService {
     void onUnpublish(SrsCallbackDTO callback);
 
     /**
+     * 主播主动结束当前直播
+     *
+     * @param userId 当前登录用户 id
+     */
+    void endCurrentLive(Long userId);
+
+    /**
      * 与 SRS 的在线流列表对账，回收回调丢失导致的僵尸场次
      *
      * @param activeStreams SRS 当前在线流集合，元素格式：app/streamName

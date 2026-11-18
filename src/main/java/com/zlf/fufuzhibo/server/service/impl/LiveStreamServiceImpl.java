@@ -19,8 +19,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.RestTemplate;
 
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
@@ -232,6 +234,95 @@ public class LiveStreamServiceImpl implements LiveStreamService {
 
         log.info("推流结束: stream={}, sessionId={}, clientId={}",
                 session.getStreamName(), session.getId(), clientId);
+    }
+
+    /**
+     * 主播主动结束直播：结束进行中的场次并尽力通知 SRS 断开推流
+     */
+    @Override
+    @Transactional
+    public void endCurrentLive(Long userId) {
+        LiveRoom room = liveRoomMapper.selectOne(
+                Wrappers.<LiveRoom>lambdaQuery().eq(LiveRoom::getUserId, userId));
+        if (room == null) {
+            throw new BaseException(MessageConstant.PUSH_ROOM_NOT_FOUND);
+        }
+
+        LiveSession session = liveSessionMapper.selectOne(
+                Wrappers.<LiveSession>lambdaQuery()
+                        .eq(LiveSession::getRoomId, room.getId())
+                        .in(LiveSession::getStatus,
+                                LiveStatusConstant.SESSION_PENDING, LiveStatusConstant.SESSION_LIVE)
+                        .orderByDesc(LiveSession::getId)
+                        .last("LIMIT 1"));
+        if (session == null) {
+            // 重复点击或已经结束，按幂等成功处理
+            log.info("结束直播：当前没有进行中的场次，忽略: userId={}, roomId={}",
+                    userId, room.getId());
+            return;
+        }
+
+        LocalDateTime now = LocalDateTime.now(ZONE);
+        boolean wasLive = LiveStatusConstant.SESSION_LIVE.equals(session.getStatus());
+
+        LiveSession sessionUpdate = new LiveSession();
+        sessionUpdate.setId(session.getId());
+        sessionUpdate.setStatus(LiveStatusConstant.SESSION_ENDED);
+        sessionUpdate.setEndTime(now);
+        sessionUpdate.setEndReason(wasLive
+                ? LiveStatusConstant.END_REASON_NORMAL
+                : LiveStatusConstant.END_REASON_CANCELLED);
+        if (wasLive && session.getStartTime() != null) {
+            long seconds = Duration.between(session.getStartTime(), now).getSeconds();
+            sessionUpdate.setDuration((int) Math.max(seconds, 0));
+        } else {
+            sessionUpdate.setDuration(0);
+        }
+        liveSessionMapper.updateById(sessionUpdate);
+
+        // 仅当直播间仍由该场次推流时才回写，避免覆盖已经开始的下一路推流
+        LambdaUpdateWrapper<LiveRoom> roomUpdate = Wrappers.<LiveRoom>lambdaUpdate()
+                .eq(LiveRoom::getId, room.getId())
+                .set(LiveRoom::getStatus, LiveStatusConstant.ROOM_NOT_STARTED)
+                .set(LiveRoom::getCurrentClientId, null)
+                .set(LiveRoom::getLastEndTime, now)
+                .set(LiveRoom::getUpdateTime, now);
+        if (session.getClientId() == null) {
+            roomUpdate.isNull(LiveRoom::getCurrentClientId);
+        } else {
+            roomUpdate.eq(LiveRoom::getCurrentClientId, session.getClientId());
+        }
+        liveRoomMapper.update(null, roomUpdate);
+
+        releaseLock(session.getStreamName(), session.getClientId());
+        if (wasLive && !isBlank(session.getClientId())) {
+            kickSrsClient(session.getClientId());
+        }
+
+        log.info("主播主动结束直播: userId={}, sessionId={}, clientId={}, wasLive={}",
+                userId, session.getId(), session.getClientId(), wasLive);
+    }
+
+    /**
+     * 通知 SRS 主动踢断推流；失败只记录日志，数据库状态已结束，对账任务会兜底
+     */
+    private void kickSrsClient(String clientId) {
+        String apiHost = srsProperties.getApiHost();
+        Integer apiPort = srsProperties.getApiPort();
+        if (isBlank(apiHost) || apiPort == null) {
+            log.warn("SRS API 未配置，跳过踢流: clientId={}", clientId);
+            return;
+        }
+        try {
+            SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+            factory.setConnectTimeout(Duration.ofSeconds(2));
+            factory.setReadTimeout(Duration.ofSeconds(3));
+            new RestTemplate(factory)
+                    .delete("http://" + apiHost + ":" + apiPort + "/api/v1/clients/" + clientId);
+            log.info("已通知 SRS 断开推流: clientId={}", clientId);
+        } catch (Exception e) {
+            log.error("通知 SRS 踢流失败，OBS 可能仍在推流: clientId={}", clientId, e);
+        }
     }
 
     /**

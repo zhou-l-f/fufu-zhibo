@@ -12,6 +12,7 @@ import com.zlf.fufuzhibo.pojo.dto.StartLiveDTO;
 import com.zlf.fufuzhibo.pojo.entity.LiveRoom;
 import com.zlf.fufuzhibo.pojo.entity.LiveSession;
 import com.zlf.fufuzhibo.pojo.vo.LiveRoomVO;
+import com.zlf.fufuzhibo.pojo.vo.MyLiveRoomVO;
 import com.zlf.fufuzhibo.pojo.vo.StartLiveVO;
 import com.zlf.fufuzhibo.server.mapper.LiveRoomMapper;
 import com.zlf.fufuzhibo.server.mapper.LiveSessionMapper;
@@ -20,6 +21,7 @@ import com.zlf.fufuzhibo.server.service.PublisherValidator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -42,12 +44,18 @@ public class LiveRoomServiceImpl implements LiveRoomService {
      */
     private static final String COVER_DIR = "cover";
 
+    /**
+     * 在线人数 Redis key 前缀，与公开列表接口保持一致
+     */
+    private static final String VIEWER_KEY_PREFIX = "live:viewers:";
+
     private final LiveRoomMapper liveRoomMapper;
     private final LiveSessionMapper liveSessionMapper;
     private final PublisherValidator publisherValidator;
     private final PushProperties pushProperties;
     private final SrsProperties srsProperties;
     private final AliOssUtil aliOssUtil;
+    private final StringRedisTemplate stringRedisTemplate;
 
     /**
      * 注册直播间：校验开播资格后分配唯一流名，重复调用返回已有直播间
@@ -183,5 +191,60 @@ public class LiveRoomServiceImpl implements LiveRoomService {
 
     private String generateStreamName() {
         return "s" + UUID.randomUUID().toString().replace("-", "");
+    }
+
+    /**
+     * 查询当前用户的直播间信息，未创建时返回 hasRoom=false
+     */
+    @Override
+    public MyLiveRoomVO getMyRoom(Long userId) {
+        LiveRoom room = liveRoomMapper.selectOne(
+                Wrappers.<LiveRoom>lambdaQuery().eq(LiveRoom::getUserId, userId));
+        if (room == null) {
+            return MyLiveRoomVO.builder().hasRoom(false).live(false).build();
+        }
+
+        // 只看未结束的场次，主播端刷新后据此恢复“直播中/待开播”状态
+        LiveSession session = liveSessionMapper.selectOne(
+                Wrappers.<LiveSession>lambdaQuery()
+                        .eq(LiveSession::getRoomId, room.getId())
+                        .in(LiveSession::getStatus,
+                                LiveStatusConstant.SESSION_PENDING, LiveStatusConstant.SESSION_LIVE)
+                        .orderByDesc(LiveSession::getId)
+                        .last("LIMIT 1"));
+
+        MyLiveRoomVO.MyLiveRoomVOBuilder builder = MyLiveRoomVO.builder()
+                .hasRoom(true)
+                .roomId(room.getId())
+                .userId(room.getUserId())
+                .streamName(room.getStreamName())
+                .roomStatus(room.getStatus())
+                .live(LiveStatusConstant.ROOM_LIVE.equals(room.getStatus()))
+                .viewerCount(0);
+        if (session != null) {
+            builder.sessionId(session.getId())
+                    .sessionStatus(session.getStatus())
+                    .title(session.getTitle())
+                    .coverUrl(session.getCoverUrl())
+                    .startTime(session.getStartTime())
+                    .viewerCount(readViewerCount(session.getStreamName()));
+        }
+        return builder.build();
+    }
+
+    /**
+     * 读取在线人数，Redis 异常或脏数据时降级为 0，不影响主播端状态查询
+     */
+    private int readViewerCount(String streamName) {
+        if (streamName == null) {
+            return 0;
+        }
+        try {
+            String value = stringRedisTemplate.opsForValue().get(VIEWER_KEY_PREFIX + streamName);
+            return value == null ? 0 : Math.max(Integer.parseInt(value), 0);
+        } catch (Exception e) {
+            log.warn("读取在线人数失败，降级为 0: streamName={}", streamName, e);
+            return 0;
+        }
     }
 }

@@ -1,6 +1,7 @@
 package com.zlf.fufuzhibo.server.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.zlf.fufuzhibo.common.constant.JwtClaimsConstants;
 import com.zlf.fufuzhibo.common.constant.MessageConstant;
 import com.zlf.fufuzhibo.common.constant.StatusConstant;
@@ -19,6 +20,7 @@ import com.zlf.fufuzhibo.pojo.dto.UserRegisterDTO;
 import com.zlf.fufuzhibo.pojo.entity.User;
 import com.zlf.fufuzhibo.pojo.entity.UserIdentity;
 import com.zlf.fufuzhibo.pojo.vo.UserLoginVO;
+import com.zlf.fufuzhibo.pojo.vo.UserProfileVO;
 import com.zlf.fufuzhibo.server.mapper.UserIdentityMapper;
 import com.zlf.fufuzhibo.server.mapper.UserMapper;
 import com.zlf.fufuzhibo.server.service.UserService;
@@ -95,6 +97,30 @@ public class UserServiceImpl implements UserService {
                 .token(token)
                 .gender(user.getGender())
                 .avatarUrl(user.getAvatarUrl())
+                .build();
+    }
+
+    /**
+     * 查询当前登录用户资料，附带实名认证状态
+     */
+    @Override
+    public UserProfileVO getProfile(Long userId) {
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new AccountNotFoundException(MessageConstant.ACCOUNT_NOT_FOUND);
+        }
+
+        Long identityCount = userIdentityMapper.selectCount(
+                Wrappers.<UserIdentity>lambdaQuery().eq(UserIdentity::getUserId, userId));
+
+        return UserProfileVO.builder()
+                .id(user.getId())
+                .username(user.getUsername())
+                .name(user.getName())
+                .gender(user.getGender())
+                .avatarUrl(user.getAvatarUrl())
+                .status(user.getStatus())
+                .verified(identityCount != null && identityCount > 0)
                 .build();
     }
 
