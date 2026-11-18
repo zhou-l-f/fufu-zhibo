@@ -10,6 +10,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 
+import java.time.Duration;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -33,8 +34,8 @@ public class LiveStreamReconcileTask {
         this.jsonMapper = jsonMapper;
 
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(3000);
-        factory.setReadTimeout(5000);
+        factory.setConnectTimeout(Duration.ofSeconds(3));
+        factory.setReadTimeout(Duration.ofSeconds(5));
         this.restTemplate = new RestTemplate(factory);
     }
 
@@ -61,7 +62,7 @@ public class LiveStreamReconcileTask {
 
             Set<String> activeStreams = new HashSet<>();
             for (JsonNode stream : root.path("streams")) {
-                activeStreams.add(stream.path("app").asText() + "/" + stream.path("name").asText());
+                activeStreams.add(stream.path("app").asString() + "/" + stream.path("name").asString());
             }
 
             int closed = liveStreamService.reconcile(activeStreams);

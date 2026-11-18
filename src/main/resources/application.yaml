@@ -19,6 +19,10 @@ spring:
   jackson:
     time-zone: Asia/Shanghai
     date-format: yyyy-MM-dd HH:mm:ss
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 55MB
 
 mybatis-plus:
   mapper-locations: classpath:mapper/*.xml
@@ -73,3 +77,10 @@ fufu:
     hls-enabled: ${fufu.srs.hls-enabled}
     reconcile-interval-ms: ${fufu.srs.reconcile-interval-ms}
     app: ${fufu.srs.app}
+  
+  alioss:
+    access-key-id: ${fufu.alioss.access-key-id}
+    access-key-secret: ${fufu.alioss.access-key-secret}
+    bucket-name: ${fufu.alioss.bucket-name}
+    endpoint: ${fufu.alioss.endpoint}
+

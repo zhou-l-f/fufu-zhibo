@@ -1,47 +1,43 @@
 package com.zlf.fufuzhibo.server.controller.user;
 
-import com.zlf.fufuzhibo.common.constant.JwtClaimsConstants;
-import com.zlf.fufuzhibo.common.constant.MessageConstant;
-import com.zlf.fufuzhibo.common.exception.BaseException;
-import com.zlf.fufuzhibo.common.properties.JwtProperties;
 import com.zlf.fufuzhibo.common.result.Result;
-import com.zlf.fufuzhibo.common.utils.JwtUtil;
+import com.zlf.fufuzhibo.common.utils.SecurityUtil;
 import com.zlf.fufuzhibo.pojo.dto.UserIdentityDTO;
 import com.zlf.fufuzhibo.pojo.dto.UserLoginDTO;
+import com.zlf.fufuzhibo.pojo.dto.UserProfileDTO;
 import com.zlf.fufuzhibo.pojo.dto.UserRegisterDTO;
-import com.zlf.fufuzhibo.pojo.entity.User;
 import com.zlf.fufuzhibo.pojo.vo.UserLoginVO;
 import com.zlf.fufuzhibo.server.service.UserService;
+import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.ModelAttribute;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.HashMap;
-import java.util.Map;
-
 @Tag(name = "用户管理接口")
 @Slf4j
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/user/user")
+@RequestMapping("/user")
 public class UserController {
 
     private final UserService userService;
-    private final JwtProperties jwtProperties;
 
     /**
      * 用户注册
      * @param userRegisterDTO 用户注册信息DTO
      * @return 无返回值
      */
-    @PostMapping("/register")
+    @Operation(summary = "用户注册",
+            description = "使用用户名和密码注册普通用户账号，账号默认启用；用户名不可重复。")
+    @PostMapping("/users")
     public Result<Void> register(@RequestBody @Valid UserRegisterDTO userRegisterDTO){
         log.info("用户注册: username={}", userRegisterDTO.getUsername());
         userService.register(userRegisterDTO);
@@ -53,17 +49,26 @@ public class UserController {
      * @param userIdentityDTO 用户实名认证信息DTO
      * @return 无返回值
      */
-    @PostMapping("/identity")
+    @Operation(summary = "用户实名认证",
+            description = "提交真实姓名、手机号与身份证号完成实名认证，提交即认证通过；同一用户只能认证一次，手机号与身份证号不可重复绑定。")
+    @PostMapping("/identities")
     public Result<Void> identity(@RequestBody @Valid UserIdentityDTO userIdentityDTO){
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        Object principal = authentication == null ? null : authentication.getPrincipal();
-        if (principal == null) {
-            throw new BaseException(MessageConstant.USER_NOT_LOGIN);
-        }
-        Long userId = Long.valueOf(principal.toString());
+        Long userId = SecurityUtil.currentUserId();
         log.info("用户实名认证: userId={}", userId);
         userService.verify(userIdentityDTO, userId);
         return Result.success();
+    }
+
+    /**
+     * 完善个人信息：昵称、性别、头像，只更新传入的字段
+     */
+    @Operation(summary = "完善个人信息",
+            description = "按需修改昵称、性别和头像，只更新传入的字段；头像经阿里云 OSS 上传，返回最新头像地址。")
+    @PatchMapping(value = "/users/me", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Result<String> updateProfile(@ModelAttribute @Valid UserProfileDTO dto) {
+        Long userId = SecurityUtil.currentUserId();
+        log.info("完善个人信息: userId={}", userId);
+        return Result.success(userService.updateProfile(userId, dto));
     }
 
     /**
@@ -71,27 +76,11 @@ public class UserController {
      * @param userLoginDTO 用户登录信息DTO
      * @return 用户登录VO
      */
-    @PostMapping("/login")
+    @Operation(summary = "用户登录",
+            description = "使用用户名和密码登录，成功后返回 JWT 令牌以及昵称、性别、头像等基础资料。")
+    @PostMapping("/sessions")
     public Result<UserLoginVO> login(@RequestBody @Valid UserLoginDTO userLoginDTO){
         log.info("用户登录: {}", userLoginDTO);
-        User user = userService.login(userLoginDTO);
-
-        //生成JWT令牌
-        Map<String, Object> claims = new HashMap<>();
-        claims.put(JwtClaimsConstants.USER_ID, user.getId());
-
-        String token = JwtUtil.createJWT(
-                jwtProperties.getUserSecretKey(),
-                jwtProperties.getUserExpireTime(),
-                claims);
-
-        UserLoginVO userLoginVO = UserLoginVO.builder()
-                                    .name(user.getName())
-                                    .token(token)
-                                    .gender(user.getGender())
-                                    .avatarUrl(user.getAvatarUrl())
-                                    .build();
-
-        return Result.success(userLoginVO);
+        return Result.success(userService.login(userLoginDTO));
     }
 }

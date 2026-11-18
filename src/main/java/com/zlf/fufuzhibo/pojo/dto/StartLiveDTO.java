@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
+import org.springframework.web.multipart.MultipartFile;
 
 @Data
 @Schema(name = "StartLiveDTO", description = "申请开始直播DTO")
@@ -13,6 +14,6 @@ public class StartLiveDTO {
     @Size(max = 128, message = "直播标题不能超过 128 个字符")
     private String title;
 
-    @Size(max = 512, message = "封面地址不能超过 512 个字符")
-    private String coverUrl;
+    @Schema(description = "直播封面图片，不传则本轮直播无封面", type = "string", format = "binary")
+    private MultipartFile cover;
 }

@@ -3,6 +3,8 @@ package com.zlf.fufuzhibo.server.controller.srs;
 import com.zlf.fufuzhibo.common.properties.SrsProperties;
 import com.zlf.fufuzhibo.pojo.dto.SrsCallbackDTO;
 import com.zlf.fufuzhibo.server.service.LiveStreamService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -16,6 +18,7 @@ import java.security.MessageDigest;
 import java.util.HashMap;
 import java.util.Map;
 
+@Tag(name = "SRS 回调接口", description = "供 SRS 服务端调用的内部回调，非前端业务接口")
 @Slf4j
 @RestController
 @RequestMapping("/srs")
@@ -29,6 +32,8 @@ public class SrsCallbackController {
      * SRS 推流开始回调：OBS 点开始直播、推流连接成功后触发
      * 返回约定：0 = 允许推流；非 0 = 拒绝推流（业务鉴权用）
      */
+    @Operation(summary = "SRS 推流开始回调",
+            description = "OBS 建立推流连接时由 SRS 触发，校验回调密钥、推流 token 与场次状态；返回 code=0 允许推流，非 0 拒绝推流。")
     @PostMapping("/on_publish")
     public Map<String, Object> onPublish(
             @RequestParam(value = "secret", required = false) String secret,
@@ -54,6 +59,8 @@ public class SrsCallbackController {
     /**
      * SRS 推流结束回调：OBS 停止直播、连接断开后触发
      */
+    @Operation(summary = "SRS 推流结束回调",
+            description = "推流断开时由 SRS 触发，结束对应直播场次并释放推流锁；异常仅记录日志，不阻塞 SRS。")
     @PostMapping("/on_unpublish")
     public Map<String, Object> onUnpublish(
             @RequestParam(value = "secret", required = false) String secret,

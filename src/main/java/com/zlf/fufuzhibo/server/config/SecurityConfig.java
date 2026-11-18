@@ -32,9 +32,9 @@ public class SecurityConfig {
 
                 .authorizeHttpRequests(auth -> auth
                         // ===== 登录接口放行，必须放在 hasRole 之前 =====
-                        .requestMatchers(HttpMethod.POST, "/admin/admin/login").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/user/user/login").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/user/user/register").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/admin/sessions").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/user/sessions").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/user/users").permitAll()
 
                         .requestMatchers(HttpMethod.POST, "/srs/on_publish").permitAll() // SRS 推流测试回调放行
                         .requestMatchers(HttpMethod.POST, "/srs/on_unpublish").permitAll() // SRS 断流测试回调放行
