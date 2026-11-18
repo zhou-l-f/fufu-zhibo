@@ -22,7 +22,18 @@ public class LiveSession {
     private Long userId;
 
     /**
-     * SRS 推流客户端 id，回调幂等键
+     * 本场直播标题
+     */
+    private String title;
+
+    /**
+     * 本场直播封面 URL
+     */
+    @TableField("cover_url")
+    private String coverUrl;
+
+    /**
+     * SRS 推流客户端 id，on_publish 时写入
      */
     @TableField("client_id")
     private String clientId;
@@ -31,10 +42,13 @@ public class LiveSession {
     private String streamName;
 
     /**
-     * 1 直播中、2 已结束
+     * 0 待开播、1 直播中、2 已结束
      */
     private Integer status;
 
+    /**
+     * 推流开始时间，on_publish 时写入
+     */
     @TableField("start_time")
     private LocalDateTime startTime;
 

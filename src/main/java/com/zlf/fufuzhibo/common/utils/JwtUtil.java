@@ -15,11 +15,13 @@ public class JwtUtil {
     /**
      * 生成 JWT（0.12.6 适配版）
      * 使用 HS256 算法，密钥由传入的 secretKey 字符串经 Keys.hmacShaKeyFor 转换为 SecretKey
+     *
+     * @param ttlSeconds 有效期（秒）
      */
-    public static String createJWT(String secretKey, long ttlMillis, Map<String, Object> claims) {
+    public static String createJWT(String secretKey, long ttlSeconds, Map<String, Object> claims) {
         SecretKey key = Keys.hmacShaKeyFor(secretKey.getBytes(StandardCharsets.UTF_8));
 
-        long expMillis = System.currentTimeMillis() + ttlMillis;
+        long expMillis = System.currentTimeMillis() + ttlSeconds * 1000;
         Date exp = new Date(expMillis);
 
         JwtBuilder builder = Jwts.builder()

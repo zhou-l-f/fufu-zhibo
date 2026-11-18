@@ -18,11 +18,6 @@ public class LiveRoom {
     @TableField("user_id")
     private Long userId;
 
-    private String title;
-
-    @TableField("cover_url")
-    private String coverUrl;
-
     @TableField("stream_name")
     private String streamName;
 

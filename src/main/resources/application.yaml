@@ -57,3 +57,19 @@ fufu:
   crypto:
     aes-key: ${fufu.crypto.aes-key}
     hmac-key: ${fufu.crypto.hmac-key}
+
+  push:
+    secret-key: ${fufu.push.secret-key}
+    expire-time: ${fufu.push.expire-time}
+    reconnect-grace-seconds: ${fufu.push.reconnect-grace-seconds}
+
+  srs:
+    callback-secret: ${fufu.srs.callback-secret}
+    rtmp-host: ${fufu.srs.rtmp-host}
+    rtmp-port: ${fufu.srs.rtmp-port}
+    http-port: ${fufu.srs.http-port}
+    api-host: ${fufu.srs.api-host}
+    api-port: ${fufu.srs.api-port}
+    hls-enabled: ${fufu.srs.hls-enabled}
+    reconcile-interval-ms: ${fufu.srs.reconcile-interval-ms}
+    app: ${fufu.srs.app}

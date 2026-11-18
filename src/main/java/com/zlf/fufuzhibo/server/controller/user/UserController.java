@@ -38,8 +38,8 @@ public class UserController {
 
     /**
      * 用户注册
-     * @param userRegisterDTO
-     * @return
+     * @param userRegisterDTO 用户注册信息DTO
+     * @return 无返回值
      */
     @PostMapping("/register")
     public Result<Void> register(@RequestBody @Valid UserRegisterDTO userRegisterDTO){
@@ -50,8 +50,8 @@ public class UserController {
 
     /**
      * 用户实名认证
-     * @param userIdentityDTO
-     * @return
+     * @param userIdentityDTO 用户实名认证信息DTO
+     * @return 无返回值
      */
     @PostMapping("/identity")
     public Result<Void> identity(@RequestBody @Valid UserIdentityDTO userIdentityDTO){
@@ -66,8 +66,13 @@ public class UserController {
         return Result.success();
     }
 
+    /**
+     * 用户登录
+     * @param userLoginDTO 用户登录信息DTO
+     * @return 用户登录VO
+     */
     @PostMapping("/login")
-    public Result<UserLoginVO> login(@RequestBody UserLoginDTO userLoginDTO){
+    public Result<UserLoginVO> login(@RequestBody @Valid UserLoginDTO userLoginDTO){
         log.info("用户登录: {}", userLoginDTO);
         User user = userService.login(userLoginDTO);
 
