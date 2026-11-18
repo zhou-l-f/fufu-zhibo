@@ -4,4 +4,16 @@
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.zlf.fufuzhibo.server.mapper.UserMapper">
 
+    <!-- 按需更新个人信息，只更新传入的非空字段 -->
+    <update id="updateProfile">
+        UPDATE `user`
+        <set>
+            <if test="name != null">`name` = #{name},</if>
+            <if test="gender != null">gender = #{gender},</if>
+            <if test="avatarUrl != null">avatar_url = #{avatarUrl},</if>
+            update_time = NOW()
+        </set>
+        WHERE id = #{id}
+    </update>
+
 </mapper>

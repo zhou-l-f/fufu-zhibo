@@ -22,18 +22,6 @@ public interface UserMapper extends BaseMapper<User> {
     /**
      * 按需更新个人信息，只更新传入的非空字段
      */
-    @Update("""
-            <script>
-            UPDATE `user`
-            <set>
-                <if test="name != null">`name` = #{name},</if>
-                <if test="gender != null">gender = #{gender},</if>
-                <if test="avatarUrl != null">avatar_url = #{avatarUrl},</if>
-                update_time = NOW()
-            </set>
-            WHERE id = #{id}
-            </script>
-            """)
     int updateProfile(@Param("id") Long id,
                       @Param("name") String name,
                       @Param("gender") Integer gender,
