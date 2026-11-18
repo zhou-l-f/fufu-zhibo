@@ -77,7 +77,8 @@ public class UserController {
      * 完善个人信息：昵称、性别、头像，只更新传入的字段
      */
     @Operation(summary = "完善个人信息",
-            description = "按需修改昵称、性别和头像，只更新传入的字段；头像经阿里云 OSS 上传，返回最新头像地址。")
+            description = "按需修改昵称、性别和头像，只更新传入的字段；头像经阿里云 OSS 上传。"
+                    + "返回最新头像地址：未上传头像时返回当前头像，用户从未设置头像时返回 null，前端应仅在返回值非空时覆盖本地头像。")
     @PatchMapping(value = "/users/me", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public Result<String> updateProfile(@ModelAttribute @Valid UserProfileDTO dto) {
         Long userId = SecurityUtil.currentUserId();

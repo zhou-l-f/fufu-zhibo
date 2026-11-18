@@ -46,7 +46,8 @@ public class PublicLiveRoomController {
     }
 
     @Operation(summary = "查询直播间详情",
-            description = "返回直播间标题、封面、在线观看人数与播放地址；直播间不存在或已下播时返回统一错误码 40401。")
+            description = "返回直播间标题、封面、在线观看人数与播放地址。HTTP 状态码始终为 200，业务结果通过 code 判断："
+                    + "直播间不存在、已下播或已封禁时返回 40401，前端应按「直播已结束」处理。")
     @GetMapping("/{roomId}")
     public Result<LiveRoomDetailVO> getLiveRoom(
             @PathVariable @Positive(message = "直播间 id 不合法") Long roomId) {
