@@ -27,4 +27,6 @@ public class LiveStatusConstant {
     public static final Integer END_REASON_ERROR = 3;
     /** 结束原因：未开播即被新场次替代 */
     public static final Integer END_REASON_CANCELLED = 4;
+    /** 结束原因：主播主动关播 */
+    public static final Integer END_REASON_MANUAL = 5;
 }

@@ -42,8 +42,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/user/sessions").permitAll()
                         .requestMatchers(HttpMethod.POST, "/user/users").permitAll()
 
-                        .requestMatchers(HttpMethod.POST, "/srs/on_publish").permitAll() // SRS 推流测试回调放行
-                        .requestMatchers(HttpMethod.POST, "/srs/on_unpublish").permitAll() // SRS 断流测试回调放行
+                        // SRS 全部回调放行（推流/断流/播放/停止），回调内部用 secret 校验
+                        .requestMatchers("/srs/**").permitAll()
 
                         // ===== 匿名浏览接口放行：直播中房间列表与详情 =====
                         .requestMatchers(HttpMethod.GET, "/public/live-rooms").permitAll()

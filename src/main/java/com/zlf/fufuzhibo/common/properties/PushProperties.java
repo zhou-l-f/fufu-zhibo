@@ -26,4 +26,9 @@ public class PushProperties {
      * 断流后允许同一场次重连的宽限期（秒），覆盖 OBS 自动重连
      */
     private Integer reconnectGraceSeconds;
+
+    /**
+     * 断流后延迟结束场次的宽限期（秒），期间 OBS 重连可无缝续播
+     */
+    private Integer endGraceSeconds;
 }

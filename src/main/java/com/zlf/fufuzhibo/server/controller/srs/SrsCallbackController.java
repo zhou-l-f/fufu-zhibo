@@ -3,6 +3,7 @@ package com.zlf.fufuzhibo.server.controller.srs;
 import com.zlf.fufuzhibo.common.properties.SrsProperties;
 import com.zlf.fufuzhibo.pojo.dto.SrsCallbackDTO;
 import com.zlf.fufuzhibo.server.service.LiveStreamService;
+import com.zlf.fufuzhibo.server.service.ViewerCountService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +27,7 @@ import java.util.Map;
 public class SrsCallbackController {
 
     private final LiveStreamService liveStreamService;
+    private final ViewerCountService viewerCountService;
     private final SrsProperties srsProperties;
 
     /**
@@ -79,6 +81,43 @@ public class SrsCallbackController {
             // 断流回调不阻塞 SRS，异常只记录日志
             log.error("on_unpublish 处理失败: clientId={}", callback.getClientId(), e);
         }
+        return ok();
+    }
+
+    /**
+     * SRS 播放开始回调：观众开始拉流时触发，在线人数 +1。
+     * 该回调是同步阻塞的，处理必须极快，且任何情况下都返回 0 放行。
+     */
+    @Operation(summary = "SRS 播放开始回调",
+            description = "观众开始拉流时由 SRS 触发，在线人数加一；处理异常不影响播放，始终返回 code=0。")
+    @PostMapping("/on_play")
+    public Map<String, Object> onPlay(
+            @RequestParam(value = "secret", required = false) String secret,
+            @RequestBody SrsCallbackDTO callback) {
+        if (!secretValid(secret)) {
+            return fail();
+        }
+        log.debug("SRS 播放回调 on_play: stream={}, clientId={}",
+                callback.getStream(), callback.getClientId());
+        viewerCountService.onPlay(callback.getStream());
+        return ok();
+    }
+
+    /**
+     * SRS 播放结束回调：观众断开拉流时触发，在线人数 -1
+     */
+    @Operation(summary = "SRS 播放结束回调",
+            description = "观众停止拉流时由 SRS 触发，在线人数减一（最低为 0）；异常仅记录日志，不阻塞 SRS。")
+    @PostMapping("/on_stop")
+    public Map<String, Object> onStop(
+            @RequestParam(value = "secret", required = false) String secret,
+            @RequestBody SrsCallbackDTO callback) {
+        if (!secretValid(secret)) {
+            return fail();
+        }
+        log.debug("SRS 播放回调 on_stop: stream={}, clientId={}",
+                callback.getStream(), callback.getClientId());
+        viewerCountService.onStop(callback.getStream());
         return ok();
     }
 

@@ -66,6 +66,7 @@ fufu:
     secret-key: ${fufu.push.secret-key}
     expire-time: ${fufu.push.expire-time}
     reconnect-grace-seconds: ${fufu.push.reconnect-grace-seconds}
+    end-grace-seconds: ${fufu.push.end-grace-seconds:30}
 
   srs:
     callback-secret: ${fufu.srs.callback-secret}

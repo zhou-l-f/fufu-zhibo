@@ -15,6 +15,7 @@ import com.zlf.fufuzhibo.server.mapper.LiveRoomMapper;
 import com.zlf.fufuzhibo.server.mapper.LiveSessionMapper;
 import com.zlf.fufuzhibo.server.service.LiveStreamService;
 import com.zlf.fufuzhibo.server.service.PublisherValidator;
+import com.zlf.fufuzhibo.server.service.ViewerCountService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -46,6 +47,16 @@ public class LiveStreamServiceImpl implements LiveStreamService {
     private static final Duration PUBLISH_LOCK_TTL = Duration.ofHours(24);
 
     /**
+     * 断流待结束标记：ZSET member=streamName，score=到期时间戳
+     */
+    private static final String PENDING_END_KEY = "live:pending_end";
+
+    /**
+     * 待结束场次对应的推流 clientId，用于判断期间是否发生过重连接管
+     */
+    private static final String PENDING_END_CLIENT_PREFIX = "live:pending_end:client:";
+
+    /**
      * 刚开播的场次在 SRS API 中可能还没出现，对账时先放过这段时间
      */
     private static final long RECONCILE_START_GRACE_SECONDS = 15;
@@ -63,6 +74,7 @@ public class LiveStreamServiceImpl implements LiveStreamService {
     private final StringRedisTemplate stringRedisTemplate;
     private final PushProperties pushProperties;
     private final SrsProperties srsProperties;
+    private final ViewerCountService viewerCountService;
 
     /**
      * 推流开始：校验 token 与场次，首次推流绑定 clientId，断流宽限期内允许重连恢复
@@ -97,9 +109,12 @@ public class LiveStreamServiceImpl implements LiveStreamService {
         if (!room.getUserId().equals(tokenUserId)) {
             throw new BaseException(MessageConstant.PUSH_USER_MISMATCH);
         }
+        // 断流宽限期内旧连接已断开，允许新连接接管同一场次
+        boolean takeover = isPendingEnd(streamName, room.getCurrentClientId());
         if (LiveStatusConstant.ROOM_LIVE.equals(room.getStatus())
                 && !isBlank(room.getCurrentClientId())
-                && !room.getCurrentClientId().equals(clientId)) {
+                && !room.getCurrentClientId().equals(clientId)
+                && !takeover) {
             throw new BaseException(MessageConstant.PUSH_STREAM_OCCUPIED);
         }
 
@@ -114,6 +129,7 @@ public class LiveStreamServiceImpl implements LiveStreamService {
 
         LocalDateTime now = LocalDateTime.now(ZONE);
         boolean reconnect = false;
+        boolean takeoverSession = false;
         if (LiveStatusConstant.SESSION_ENDED.equals(session.getStatus())) {
             if (!canReconnect(session, now)) {
                 throw new BaseException(MessageConstant.LIVE_SESSION_ENDED);
@@ -121,11 +137,16 @@ public class LiveStreamServiceImpl implements LiveStreamService {
             reconnect = true;
         } else if (LiveStatusConstant.SESSION_LIVE.equals(session.getStatus())) {
             if (clientId.equals(session.getClientId())) {
+                clearPendingEnd(streamName);
                 log.info("重复的 on_publish 回调，场次已直播中: sessionId={}, clientId={}",
                         sessionId, clientId);
                 return;
             }
-            throw new BaseException(MessageConstant.PUSH_STREAM_OCCUPIED);
+            if (isPendingEnd(streamName, session.getClientId())) {
+                takeoverSession = true;
+            } else {
+                throw new BaseException(MessageConstant.PUSH_STREAM_OCCUPIED);
+            }
         } else if (!LiveStatusConstant.SESSION_PENDING.equals(session.getStatus())) {
             throw new BaseException(MessageConstant.LIVE_SESSION_MISMATCH);
         }
@@ -157,6 +178,10 @@ public class LiveStreamServiceImpl implements LiveStreamService {
                         .set(LiveSession::getEndTime, null)
                         .set(LiveSession::getEndReason, null)
                         .set(LiveSession::getDuration, null);
+            } else if (takeoverSession) {
+                // 宽限期内新连接接管同一场次：保留原开始时间
+                sessionUpdate.eq(LiveSession::getStatus, LiveStatusConstant.SESSION_LIVE)
+                        .eq(LiveSession::getClientId, session.getClientId());
             } else {
                 sessionUpdate.eq(LiveSession::getStatus, LiveStatusConstant.SESSION_PENDING)
                         .set(LiveSession::getStartTime, now);
@@ -169,13 +194,15 @@ public class LiveStreamServiceImpl implements LiveStreamService {
             roomUpdate.setId(room.getId());
             roomUpdate.setStatus(LiveStatusConstant.ROOM_LIVE);
             roomUpdate.setCurrentClientId(clientId);
-            if (!reconnect) {
+            if (!reconnect && !takeoverSession) {
                 roomUpdate.setLastStartTime(now);
             }
             liveRoomMapper.updateById(roomUpdate);
 
+            clearPendingEnd(streamName);
+
             log.info("推流{}: stream={}, userId={}, sessionId={}, clientId={}",
-                    reconnect ? "重连恢复" : "开始",
+                    reconnect ? "重连恢复" : takeoverSession ? "宽限期接管" : "开始",
                     streamName, room.getUserId(), sessionId, clientId);
         } catch (RuntimeException e) {
             releaseLock(streamName, clientId);
@@ -184,7 +211,7 @@ public class LiveStreamServiceImpl implements LiveStreamService {
     }
 
     /**
-     * 推流结束：结束会话并恢复直播间状态，重复回调直接忽略
+     * 推流结束：先进入宽限期，期间 OBS 重连可无缝接管；宽限到期再由定时任务结束场次
      */
     @Override
     @Transactional
@@ -207,33 +234,105 @@ public class LiveStreamServiceImpl implements LiveStreamService {
             return;
         }
 
-        LocalDateTime now = LocalDateTime.now(ZONE);
+        long graceSeconds = endGraceSeconds();
+        if (graceSeconds <= 0 || !markPendingEnd(session.getStreamName(), clientId, graceSeconds)) {
+            finalizeSession(session, LocalDateTime.now(ZONE));
+            return;
+        }
 
+        // 释放推流锁，允许 OBS 以新连接重新推流并在宽限期内接管本场次
+        releaseLock(session.getStreamName(), clientId);
+        log.info("推流断开，进入 {} 秒宽限期: stream={}, sessionId={}, clientId={}",
+                graceSeconds, session.getStreamName(), session.getId(), clientId);
+    }
+
+    /**
+     * 落库结束场次并恢复直播间状态，同时清理在线人数与待结束标记
+     */
+    private void finalizeSession(LiveSession session, LocalDateTime now) {
         LiveSession sessionUpdate = new LiveSession();
         sessionUpdate.setId(session.getId());
         sessionUpdate.setStatus(LiveStatusConstant.SESSION_ENDED);
         sessionUpdate.setEndTime(now);
+        sessionUpdate.setEndReason(LiveStatusConstant.END_REASON_NORMAL);
         if (session.getStartTime() != null) {
             long seconds = Duration.between(session.getStartTime(), now).getSeconds();
             sessionUpdate.setDuration((int) Math.max(seconds, 0));
+        } else {
+            sessionUpdate.setDuration(0);
         }
-        sessionUpdate.setEndReason(LiveStatusConstant.END_REASON_NORMAL);
         liveSessionMapper.updateById(sessionUpdate);
 
         // 仅当直播间仍由该 client 推流时才回写，避免覆盖已经开始的下一路推流
-        liveRoomMapper.update(null,
-                Wrappers.<LiveRoom>lambdaUpdate()
-                        .eq(LiveRoom::getId, session.getRoomId())
-                        .eq(LiveRoom::getCurrentClientId, clientId)
-                        .set(LiveRoom::getStatus, LiveStatusConstant.ROOM_NOT_STARTED)
-                        .set(LiveRoom::getCurrentClientId, null)
-                        .set(LiveRoom::getLastEndTime, now)
-                        .set(LiveRoom::getUpdateTime, now));
+        LambdaUpdateWrapper<LiveRoom> roomUpdate = Wrappers.<LiveRoom>lambdaUpdate()
+                .eq(LiveRoom::getId, session.getRoomId())
+                .set(LiveRoom::getStatus, LiveStatusConstant.ROOM_NOT_STARTED)
+                .set(LiveRoom::getCurrentClientId, null)
+                .set(LiveRoom::getLastEndTime, now)
+                .set(LiveRoom::getUpdateTime, now);
+        if (session.getClientId() == null) {
+            roomUpdate.isNull(LiveRoom::getCurrentClientId);
+        } else {
+            roomUpdate.eq(LiveRoom::getCurrentClientId, session.getClientId());
+        }
+        liveRoomMapper.update(null, roomUpdate);
 
-        releaseLock(session.getStreamName(), clientId);
+        releaseLock(session.getStreamName(), session.getClientId());
+        viewerCountService.clear(session.getStreamName());
+        clearPendingEnd(session.getStreamName());
 
         log.info("推流结束: stream={}, sessionId={}, clientId={}",
-                session.getStreamName(), session.getId(), clientId);
+                session.getStreamName(), session.getId(), session.getClientId());
+    }
+
+    /**
+     * 记录断流待结束标记，返回 false 表示 Redis 不可用、需要立即结束
+     */
+    private boolean markPendingEnd(String streamName, String clientId, long graceSeconds) {
+        try {
+            long deadline = System.currentTimeMillis() + graceSeconds * 1000L;
+            stringRedisTemplate.opsForZSet().add(PENDING_END_KEY, streamName, deadline);
+            stringRedisTemplate.opsForValue().set(PENDING_END_CLIENT_PREFIX + streamName,
+                    clientId, Duration.ofSeconds(graceSeconds + 60));
+            return true;
+        } catch (Exception e) {
+            log.warn("记录断流宽限期失败，直接结束场次: stream={}", streamName, e);
+            return false;
+        }
+    }
+
+    /**
+     * 判断某个流的待结束标记是否属于指定 clientId，用于区分正常断流与重连接管
+     */
+    private boolean isPendingEnd(String streamName, String clientId) {
+        if (isBlank(streamName) || isBlank(clientId)) {
+            return false;
+        }
+        try {
+            String pendingClientId = stringRedisTemplate.opsForValue()
+                    .get(PENDING_END_CLIENT_PREFIX + streamName);
+            return clientId.equals(pendingClientId);
+        } catch (Exception e) {
+            log.warn("读取断流宽限期标记失败: stream={}", streamName, e);
+            return false;
+        }
+    }
+
+    private void clearPendingEnd(String streamName) {
+        if (isBlank(streamName)) {
+            return;
+        }
+        try {
+            stringRedisTemplate.opsForZSet().remove(PENDING_END_KEY, streamName);
+            stringRedisTemplate.delete(PENDING_END_CLIENT_PREFIX + streamName);
+        } catch (Exception e) {
+            log.debug("清理断流宽限期标记失败: stream={}", streamName, e);
+        }
+    }
+
+    private long endGraceSeconds() {
+        Integer configured = pushProperties.getEndGraceSeconds();
+        return configured == null ? 30L : Math.max(configured, 0);
     }
 
     /**
@@ -270,7 +369,7 @@ public class LiveStreamServiceImpl implements LiveStreamService {
         sessionUpdate.setStatus(LiveStatusConstant.SESSION_ENDED);
         sessionUpdate.setEndTime(now);
         sessionUpdate.setEndReason(wasLive
-                ? LiveStatusConstant.END_REASON_NORMAL
+                ? LiveStatusConstant.END_REASON_MANUAL
                 : LiveStatusConstant.END_REASON_CANCELLED);
         if (wasLive && session.getStartTime() != null) {
             long seconds = Duration.between(session.getStartTime(), now).getSeconds();
@@ -295,12 +394,64 @@ public class LiveStreamServiceImpl implements LiveStreamService {
         liveRoomMapper.update(null, roomUpdate);
 
         releaseLock(session.getStreamName(), session.getClientId());
+        viewerCountService.clear(session.getStreamName());
+        clearPendingEnd(session.getStreamName());
         if (wasLive && !isBlank(session.getClientId())) {
             kickSrsClient(session.getClientId());
         }
 
         log.info("主播主动结束直播: userId={}, sessionId={}, clientId={}, wasLive={}",
                 userId, session.getId(), session.getClientId(), wasLive);
+    }
+
+    /**
+     * 结束宽限期已到期的场次；若期间已重连接管或已结束，只清理标记
+     */
+    @Override
+    @Transactional
+    public int finalizePendingEnds() {
+        Set<String> due;
+        try {
+            due = stringRedisTemplate.opsForZSet()
+                    .rangeByScore(PENDING_END_KEY, 0, System.currentTimeMillis(), 0, 50);
+        } catch (Exception e) {
+            log.warn("读取待结束场次失败，跳过本轮", e);
+            return 0;
+        }
+        if (due == null || due.isEmpty()) {
+            return 0;
+        }
+
+        int closed = 0;
+        for (String streamName : due) {
+            String pendingClientId;
+            try {
+                pendingClientId = stringRedisTemplate.opsForValue()
+                        .get(PENDING_END_CLIENT_PREFIX + streamName);
+            } catch (Exception e) {
+                continue;
+            }
+            if (isBlank(pendingClientId)) {
+                clearPendingEnd(streamName);
+                continue;
+            }
+
+            LiveSession session = liveSessionMapper.selectOne(
+                    Wrappers.<LiveSession>lambdaQuery()
+                            .eq(LiveSession::getStreamName, streamName)
+                            .eq(LiveSession::getStatus, LiveStatusConstant.SESSION_LIVE)
+                            .orderByDesc(LiveSession::getId)
+                            .last("LIMIT 1"));
+            // 已被新连接接管或已结束，仅清理标记
+            if (session == null || !pendingClientId.equals(session.getClientId())) {
+                clearPendingEnd(streamName);
+                continue;
+            }
+
+            finalizeSession(session, LocalDateTime.now(ZONE));
+            closed++;
+        }
+        return closed;
     }
 
     /**
@@ -351,6 +502,10 @@ public class LiveStreamServiceImpl implements LiveStreamService {
             if (activeStreams.contains(streamKey)) {
                 continue;
             }
+            // 处于断流宽限期的场次交给延迟任务处理，避免宽限期被对账提前结束
+            if (isPendingEnd(session.getStreamName(), session.getClientId())) {
+                continue;
+            }
 
             LiveSession sessionUpdate = new LiveSession();
             sessionUpdate.setId(session.getId());
@@ -377,6 +532,8 @@ public class LiveStreamServiceImpl implements LiveStreamService {
             liveRoomMapper.update(null, roomUpdate);
 
             releaseLock(session.getStreamName(), session.getClientId());
+            viewerCountService.clear(session.getStreamName());
+            clearPendingEnd(session.getStreamName());
             closed++;
             log.warn("对账回收僵尸场次: stream={}, sessionId={}, clientId={}",
                     session.getStreamName(), session.getId(), session.getClientId());

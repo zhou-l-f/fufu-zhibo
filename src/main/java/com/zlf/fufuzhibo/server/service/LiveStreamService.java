@@ -31,6 +31,13 @@ public interface LiveStreamService {
     void endCurrentLive(Long userId);
 
     /**
+     * 结束断流宽限期已到期的场次
+     *
+     * @return 本次结束的场次数量
+     */
+    int finalizePendingEnds();
+
+    /**
      * 与 SRS 的在线流列表对账，回收回调丢失导致的僵尸场次
      *
      * @param activeStreams SRS 当前在线流集合，元素格式：app/streamName
