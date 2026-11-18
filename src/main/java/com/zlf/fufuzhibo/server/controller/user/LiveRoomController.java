@@ -3,25 +3,32 @@ package com.zlf.fufuzhibo.server.controller.user;
 import com.zlf.fufuzhibo.common.result.Result;
 import com.zlf.fufuzhibo.common.utils.SecurityUtil;
 import com.zlf.fufuzhibo.pojo.dto.StartLiveDTO;
+import com.zlf.fufuzhibo.pojo.vo.LiveHistoryItemVO;
 import com.zlf.fufuzhibo.pojo.vo.LiveRoomVO;
 import com.zlf.fufuzhibo.pojo.vo.MyLiveRoomVO;
+import com.zlf.fufuzhibo.pojo.vo.PageResult;
 import com.zlf.fufuzhibo.pojo.vo.StartLiveVO;
 import com.zlf.fufuzhibo.server.service.LiveRoomService;
 import com.zlf.fufuzhibo.server.service.LiveStreamService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @Tag(name = "直播管理接口")
 @Slf4j
+@Validated
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/user")
@@ -52,6 +59,24 @@ public class LiveRoomController {
         Long userId = SecurityUtil.currentUserId();
         log.info("查询我的直播间: userId={}", userId);
         return Result.success(liveRoomService.getMyRoom(userId));
+    }
+
+    /**
+     * 查询我的直播记录：主播个人主页使用，包含进行中与历史场次
+     */
+    @Operation(summary = "分页查询我的直播记录",
+            description = "按创建时间倒序返回当前用户的直播场次，包含待开播、直播中与已结束场次；"
+                    + "被新场次作废且从未推流的记录不会返回。")
+    @GetMapping("/live-sessions/me")
+    public Result<PageResult<LiveHistoryItemVO>> listMyLiveSessions(
+            @RequestParam(defaultValue = "1")
+            @Min(value = 1, message = "页码不能小于 1") Integer page,
+            @RequestParam(defaultValue = "10")
+            @Min(value = 1, message = "每页条数不能小于 1")
+            @Max(value = 50, message = "每页条数不能超过 50") Integer size) {
+        Long userId = SecurityUtil.currentUserId();
+        log.info("查询我的直播记录: userId={}, page={}, size={}", userId, page, size);
+        return Result.success(liveRoomService.listMyLiveSessions(userId, page, size));
     }
 
     /**

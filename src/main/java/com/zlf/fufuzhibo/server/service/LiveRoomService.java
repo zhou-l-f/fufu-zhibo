@@ -1,8 +1,10 @@
 package com.zlf.fufuzhibo.server.service;
 
 import com.zlf.fufuzhibo.pojo.dto.StartLiveDTO;
+import com.zlf.fufuzhibo.pojo.vo.LiveHistoryItemVO;
 import com.zlf.fufuzhibo.pojo.vo.LiveRoomVO;
 import com.zlf.fufuzhibo.pojo.vo.MyLiveRoomVO;
+import com.zlf.fufuzhibo.pojo.vo.PageResult;
 import com.zlf.fufuzhibo.pojo.vo.StartLiveVO;
 
 /**
@@ -34,4 +36,14 @@ public interface LiveRoomService {
      * @return 直播间信息；未创建直播间时 hasRoom=false
      */
     MyLiveRoomVO getMyRoom(Long userId);
+
+    /**
+     * 分页查询当前用户的直播记录，包含待开播、直播中与已结束场次
+     *
+     * @param userId 当前登录用户 id
+     * @param page   页码，从 1 开始
+     * @param size   每页条数
+     * @return 直播记录分页
+     */
+    PageResult<LiveHistoryItemVO> listMyLiveSessions(Long userId, int page, int size);
 }

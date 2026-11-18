@@ -1,6 +1,9 @@
 package com.zlf.fufuzhibo.server.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.zlf.fufuzhibo.common.constant.LiveStatusConstant;
 import com.zlf.fufuzhibo.common.constant.MessageConstant;
 import com.zlf.fufuzhibo.common.exception.BaseException;
@@ -11,8 +14,10 @@ import com.zlf.fufuzhibo.common.utils.PushTokenUtil;
 import com.zlf.fufuzhibo.pojo.dto.StartLiveDTO;
 import com.zlf.fufuzhibo.pojo.entity.LiveRoom;
 import com.zlf.fufuzhibo.pojo.entity.LiveSession;
+import com.zlf.fufuzhibo.pojo.vo.LiveHistoryItemVO;
 import com.zlf.fufuzhibo.pojo.vo.LiveRoomVO;
 import com.zlf.fufuzhibo.pojo.vo.MyLiveRoomVO;
+import com.zlf.fufuzhibo.pojo.vo.PageResult;
 import com.zlf.fufuzhibo.pojo.vo.StartLiveVO;
 import com.zlf.fufuzhibo.server.mapper.LiveRoomMapper;
 import com.zlf.fufuzhibo.server.mapper.LiveSessionMapper;
@@ -27,6 +32,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -48,6 +54,12 @@ public class LiveRoomServiceImpl implements LiveRoomService {
      * 在线人数 Redis key 前缀，与公开列表接口保持一致
      */
     private static final String VIEWER_KEY_PREFIX = "live:viewers:";
+
+    /**
+     * 直播记录分页参数
+     */
+    private static final int DEFAULT_PAGE_SIZE = 10;
+    private static final int MAX_PAGE_SIZE = 50;
 
     private final LiveRoomMapper liveRoomMapper;
     private final LiveSessionMapper liveSessionMapper;
@@ -230,6 +242,49 @@ public class LiveRoomServiceImpl implements LiveRoomService {
                     .viewerCount(readViewerCount(session.getStreamName()));
         }
         return builder.build();
+    }
+
+    /**
+     * 分页查询当前用户的直播记录：进行中场次在前，历史场次按创建时间倒序
+     */
+    @Override
+    public PageResult<LiveHistoryItemVO> listMyLiveSessions(Long userId, int page, int size) {
+        int safePage = Math.max(page, 1);
+        int safeSize = size <= 0 ? DEFAULT_PAGE_SIZE : Math.min(size, MAX_PAGE_SIZE);
+
+        // 排除被新场次作废、从未真正推流的记录，其余场次（含进行中）都返回
+        QueryWrapper<LiveSession> wrapper = new QueryWrapper<>();
+        wrapper.eq("user_id", userId)
+                .and(w -> w.ne("status", LiveStatusConstant.SESSION_ENDED)
+                        .or().isNull("end_reason")
+                        .or().ne("end_reason", LiveStatusConstant.END_REASON_CANCELLED))
+                .orderByDesc("create_time", "id");
+
+        IPage<LiveSession> result = liveSessionMapper.selectPage(
+                new Page<>(safePage, safeSize), wrapper);
+        List<LiveHistoryItemVO> records = result.getRecords() == null
+                ? List.of()
+                : result.getRecords().stream().map(this::toHistoryVO).toList();
+
+        return PageResult.<LiveHistoryItemVO>builder()
+                .page(result.getCurrent())
+                .size(result.getSize())
+                .total(result.getTotal())
+                .pages(result.getPages())
+                .records(records)
+                .build();
+    }
+
+    private LiveHistoryItemVO toHistoryVO(LiveSession session) {
+        return LiveHistoryItemVO.builder()
+                .sessionId(session.getId())
+                .title(session.getTitle())
+                .coverUrl(session.getCoverUrl())
+                .status(session.getStatus())
+                .startTime(session.getStartTime())
+                .endTime(session.getEndTime())
+                .duration(session.getDuration())
+                .build();
     }
 
     /**

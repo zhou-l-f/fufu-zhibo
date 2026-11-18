@@ -11,6 +11,7 @@ import com.zlf.fufuzhibo.common.utils.JwtUtil;
 import com.zlf.fufuzhibo.pojo.dto.AdminLoginDTO;
 import com.zlf.fufuzhibo.pojo.entity.Admin;
 import com.zlf.fufuzhibo.pojo.vo.AdminLoginVO;
+import com.zlf.fufuzhibo.pojo.vo.AdminProfileVO;
 import com.zlf.fufuzhibo.server.mapper.AdminMapper;
 import com.zlf.fufuzhibo.server.service.AdminService;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +19,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -58,6 +60,12 @@ public class AdminServiceImpl implements AdminService {
             throw new AccountLockedException(MessageConstant.ACCOUNT_LOCKED);
         }
 
+        // 记录最近登录时间，供管理员信息接口展示
+        Admin loginTimeUpdate = new Admin();
+        loginTimeUpdate.setId(admin.getId());
+        loginTimeUpdate.setLastLoginTime(LocalDateTime.now());
+        adminMapper.updateById(loginTimeUpdate);
+
         //生成JWT令牌
         Map<String, Object> claims = new HashMap<>();
         claims.put(JwtClaimsConstants.ADMIN_ID, admin.getId());
@@ -70,6 +78,19 @@ public class AdminServiceImpl implements AdminService {
                 .token(token)
                 .adminId(admin.getId())
                 .name(admin.getName())
+                .build();
+    }
+
+    @Override
+    public AdminProfileVO getProfile(Long adminId) {
+        Admin admin = adminMapper.selectById(adminId);
+        if (admin == null) {
+            throw new AccountNotFoundException(MessageConstant.ACCOUNT_NOT_FOUND);
+        }
+        return AdminProfileVO.builder()
+                .name(admin.getName())
+                .status(admin.getStatus())
+                .lastLoginTime(admin.getLastLoginTime())
                 .build();
     }
 }

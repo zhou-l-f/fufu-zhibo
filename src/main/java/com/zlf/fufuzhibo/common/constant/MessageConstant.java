@@ -28,6 +28,7 @@ public class MessageConstant {
     public static final String LIVE_SESSION_NOT_FOUND = "直播场次不存在";
     public static final String LIVE_SESSION_MISMATCH = "直播场次与推流信息不匹配";
     public static final String LIVE_SESSION_ENDED = "该直播场次已结束，请重新申请开播";
+    public static final String BAN_TIME_INVALID = "封禁截止时间必须晚于当前时间";
     public static final String FILE_EMPTY = "上传文件不能为空";
     public static final String FILE_TYPE_NOT_ALLOWED = "文件类型不支持";
     public static final String FILE_TOO_LARGE = "文件大小不能超过 50MB";

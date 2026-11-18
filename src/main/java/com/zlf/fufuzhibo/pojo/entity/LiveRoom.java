@@ -26,6 +26,12 @@ public class LiveRoom {
      */
     private Integer status;
 
+    /**
+     * 封禁截止时间，仅封禁状态有意义
+     */
+    @TableField("ban_time")
+    private LocalDateTime banTime;
+
     @TableField("current_client_id")
     private String currentClientId;
 

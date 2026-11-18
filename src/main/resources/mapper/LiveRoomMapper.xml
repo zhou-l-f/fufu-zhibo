@@ -41,4 +41,30 @@
         LIMIT 1
     </select>
 
+    <select id="selectAdminLiveRoomPage"
+            resultType="com.zlf.fufuzhibo.pojo.vo.AdminLiveRoomVO">
+        SELECT
+            r.id AS roomId,
+            r.user_id AS userId,
+            u.`name` AS anchorName,
+            r.stream_name AS streamName,
+            r.status AS status,
+            r.ban_time AS banTime,
+            r.last_start_time AS lastStartTime,
+            r.last_end_time AS lastEndTime,
+            r.create_time AS createTime
+        FROM live_room r
+        INNER JOIN `user` u ON u.id = r.user_id
+        <where>
+            <if test="status != null">
+                AND r.status = #{status}
+            </if>
+            <if test="keyword != null and keyword != ''">
+                AND (u.`name` LIKE CONCAT('%', #{keyword}, '%')
+                     OR r.stream_name LIKE CONCAT('%', #{keyword}, '%'))
+            </if>
+        </where>
+        ORDER BY r.create_time DESC, r.id DESC
+    </select>
+
 </mapper>

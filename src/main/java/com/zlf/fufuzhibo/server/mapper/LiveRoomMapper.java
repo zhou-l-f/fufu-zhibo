@@ -3,6 +3,7 @@ package com.zlf.fufuzhibo.server.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.zlf.fufuzhibo.pojo.entity.LiveRoom;
+import com.zlf.fufuzhibo.pojo.vo.AdminLiveRoomVO;
 import com.zlf.fufuzhibo.pojo.vo.LiveRoomDetailVO;
 import com.zlf.fufuzhibo.pojo.vo.LiveRoomItemVO;
 import org.apache.ibatis.annotations.Mapper;
@@ -29,4 +30,15 @@ public interface LiveRoomMapper extends BaseMapper<LiveRoom> {
      * 查询直播间详情，仅返回正在直播的直播间，不存在时返回 null
      */
     LiveRoomDetailVO selectLiveRoomDetail(@Param("roomId") Long roomId);
+
+    /**
+     * 管理端分页查询全部直播间，可按状态与关键词筛选
+     *
+     * @param page    分页参数
+     * @param status  直播间状态，为空不过滤
+     * @param keyword 主播昵称或流名模糊匹配，为空不过滤
+     */
+    IPage<AdminLiveRoomVO> selectAdminLiveRoomPage(IPage<AdminLiveRoomVO> page,
+                                                   @Param("status") Integer status,
+                                                   @Param("keyword") String keyword);
 }
