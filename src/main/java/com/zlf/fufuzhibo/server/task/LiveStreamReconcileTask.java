@@ -68,19 +68,29 @@ public class LiveStreamReconcileTask {
 
             Set<String> activeStreams = new HashSet<>();
             Map<String, Integer> viewerCounts = new HashMap<>();
+            Map<String, String> publishingClients = new HashMap<>();
             for (JsonNode stream : root.path("streams")) {
                 String streamName = stream.path("name").asString();
-                activeStreams.add(stream.path("app").asString() + "/" + streamName);
+                String streamKey = stream.path("app").asString() + "/" + streamName;
+                activeStreams.add(streamKey);
                 // SRS 的 clients 包含主播自己，减去推流连接才是观众数
                 int clients = stream.path("clients").asInt(0);
                 boolean publishing = stream.path("publish").path("active").asBoolean(false);
                 viewerCounts.put(streamName, Math.max(clients - (publishing ? 1 : 0), 0));
+                if (publishing) {
+                    String clientId = stream.path("publish").path("cid").asString();
+                    if (clientId != null && !clientId.isBlank()) {
+                        publishingClients.put(streamKey, clientId);
+                    }
+                }
             }
 
             int closed = liveStreamService.reconcile(activeStreams);
+            int kicked = liveStreamService.kickBannedRoomStreams(publishingClients);
             viewerCountService.syncCounts(viewerCounts);
-            if (closed > 0) {
-                log.info("SRS 对账完成: 在线流={}, 回收僵尸场次={}", activeStreams.size(), closed);
+            if (closed > 0 || kicked > 0) {
+                log.info("SRS 对账完成: 在线流={}, 回收僵尸场次={}, 补偿踢流={}",
+                        activeStreams.size(), closed, kicked);
             }
         } catch (Exception e) {
             // SRS 不可达时不能误伤正在直播的场次，直接跳过本轮

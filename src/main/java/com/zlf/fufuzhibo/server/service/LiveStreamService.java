@@ -2,6 +2,7 @@ package com.zlf.fufuzhibo.server.service;
 
 import com.zlf.fufuzhibo.pojo.dto.SrsCallbackDTO;
 
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -43,6 +44,14 @@ public interface LiveStreamService {
      * @return 本次作废的场次数量
      */
     int cancelStalePendingSessions();
+
+    /**
+     * 封禁补偿：踢断仍在推流的封禁直播间
+     *
+     * @param publishingClients 在线流标识（app/stream）到 SRS 推流 clientId 的映射
+     * @return 本次踢断的推流数量
+     */
+    int kickBannedRoomStreams(Map<String, String> publishingClients);
 
     /**
      * 与 SRS 的在线流列表对账，回收回调丢失导致的僵尸场次

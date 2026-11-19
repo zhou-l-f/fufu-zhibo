@@ -481,7 +481,18 @@ public class LiveStreamServiceImpl implements LiveStreamService {
         viewerCountService.clear(session.getStreamName());
         clearPendingEnd(session.getStreamName());
         if (wasLive && !isBlank(session.getClientId())) {
-            kickSrsClient(session.getClientId());
+            String kickClientId = session.getClientId();
+            // 事务提交后再踢流，避免事务回滚时出现「流已断、状态未落库」；失败由对账任务兜底
+            if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        kickSrsClient(kickClientId);
+                    }
+                });
+            } else {
+                kickSrsClient(kickClientId);
+            }
         }
 
         publishAfterCommit(room.getId(), liveEndFrame(new LiveEnded(
@@ -606,6 +617,33 @@ public class LiveStreamServiceImpl implements LiveStreamService {
             }
         }
         return cancelled;
+    }
+
+    /**
+     * 封禁补偿：踢断仍在推流的封禁直播间。
+     *
+     * <p>主动踢流在事务提交后执行，若调用失败或实例在踢流前宕机，对账任务每轮按在线流兜底补踢。
+     */
+    @Override
+    public int kickBannedRoomStreams(Map<String, String> publishingClients) {
+        if (publishingClients == null || publishingClients.isEmpty()) {
+            return 0;
+        }
+        List<LiveRoom> bannedRooms = liveRoomMapper.selectList(
+                Wrappers.<LiveRoom>lambdaQuery().eq(LiveRoom::getStatus, LiveStatusConstant.ROOM_BANNED));
+        int kicked = 0;
+        for (LiveRoom room : bannedRooms) {
+            String clientId = publishingClients.get(srsProperties.getApp() + "/" + room.getStreamName());
+            if (isBlank(clientId)) {
+                continue;
+            }
+            kickSrsClient(clientId);
+            kicked++;
+        }
+        if (kicked > 0) {
+            log.warn("封禁直播间补偿踢流: 数量={}", kicked);
+        }
+        return kicked;
     }
 
     /**
