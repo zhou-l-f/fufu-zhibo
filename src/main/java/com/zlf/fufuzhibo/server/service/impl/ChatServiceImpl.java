@@ -7,14 +7,11 @@ import com.zlf.fufuzhibo.common.constant.StatusConstant;
 import com.zlf.fufuzhibo.common.exception.BaseException;
 import com.zlf.fufuzhibo.common.properties.ChatProperties;
 import com.zlf.fufuzhibo.pojo.entity.LiveMessage;
-import com.zlf.fufuzhibo.pojo.entity.LiveRoom;
 import com.zlf.fufuzhibo.pojo.entity.LiveSession;
-import com.zlf.fufuzhibo.pojo.entity.User;
+import com.zlf.fufuzhibo.pojo.vo.ChatContextVO;
 import com.zlf.fufuzhibo.pojo.vo.ChatMessageVO;
 import com.zlf.fufuzhibo.server.mapper.LiveMessageMapper;
-import com.zlf.fufuzhibo.server.mapper.LiveRoomMapper;
 import com.zlf.fufuzhibo.server.mapper.LiveSessionMapper;
-import com.zlf.fufuzhibo.server.mapper.UserMapper;
 import com.zlf.fufuzhibo.server.service.ChatService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -78,10 +75,8 @@ public class ChatServiceImpl implements ChatService {
     private static final int MAX_PAGE_SIZE = 50;
     private static final int MESSAGE_STATUS_NORMAL = 1;
 
-    private final LiveRoomMapper liveRoomMapper;
     private final LiveSessionMapper liveSessionMapper;
     private final LiveMessageMapper liveMessageMapper;
-    private final UserMapper userMapper;
     private final StringRedisTemplate stringRedisTemplate;
     private final JsonMapper jsonMapper;
     private final ChatProperties chatProperties;
@@ -98,31 +93,30 @@ public class ChatServiceImpl implements ChatService {
                     String.format(MessageConstant.CHAT_CONTENT_TOO_LONG, maxLength));
         }
 
+        // 一次 JOIN 同时取到场次、直播间与用户状态，避免每条消息三次查库
+        ChatContextVO context = liveSessionMapper.selectChatContext(sessionId, userId);
         // 场次必须属于该直播间，且尚未彻底结束（待开播与直播中都可聊天）
-        LiveSession session = liveSessionMapper.selectById(sessionId);
-        if (session == null || !roomId.equals(session.getRoomId())) {
+        if (context == null || context.getSessionRoomId() == null
+                || !roomId.equals(context.getSessionRoomId())) {
             throw new BaseException(MessageConstant.CHAT_SESSION_INVALID);
         }
-        if (LiveStatusConstant.SESSION_ENDED.equals(session.getStatus())) {
+        if (LiveStatusConstant.SESSION_ENDED.equals(context.getSessionStatus())) {
             throw new BaseException(MessageConstant.CHAT_SESSION_ENDED);
         }
-
-        LiveRoom room = liveRoomMapper.selectById(roomId);
-        if (room == null) {
+        if (context.getRoomId() == null) {
             throw new BaseException(ErrorCode.LIVE_ROOM_NOT_FOUND);
         }
-        if (LiveStatusConstant.ROOM_BANNED.equals(room.getStatus())) {
+        if (LiveStatusConstant.ROOM_BANNED.equals(context.getRoomStatus())) {
             throw new BaseException(MessageConstant.CHAT_ROOM_BANNED);
         }
 
         tryAcquireRateLimit(sessionId, userId);
 
-        User user = userMapper.selectById(userId);
-        if (user == null) {
+        if (context.getUserId() == null) {
             throw new BaseException(MessageConstant.ACCOUNT_NOT_FOUND);
         }
         // 已登录但账号被禁用的用户不允许继续发言
-        if (!StatusConstant.ENABLE.equals(user.getStatus())) {
+        if (!StatusConstant.ENABLE.equals(context.getUserStatus())) {
             throw new BaseException(MessageConstant.ACCOUNT_LOCKED);
         }
 
@@ -135,7 +129,7 @@ public class ChatServiceImpl implements ChatService {
         message.setStatus(MESSAGE_STATUS_NORMAL);
         message.setCreateTime(LocalDateTime.now(ZONE));
 
-        ChatMessageVO vo = toVO(message, user);
+        ChatMessageVO vo = toVO(message, context);
         // 先入缓冲区保证可落库，再写最近消息缓存
         enqueue(message);
         cacheRecent(sessionId, vo);
@@ -285,15 +279,15 @@ public class ChatServiceImpl implements ChatService {
         return messages;
     }
 
-    private ChatMessageVO toVO(LiveMessage message, User user) {
+    private ChatMessageVO toVO(LiveMessage message, ChatContextVO context) {
         ChatMessageVO vo = new ChatMessageVO();
         vo.setId(message.getId());
         vo.setSeq(message.getSeq());
         vo.setRoomId(message.getRoomId());
         vo.setSessionId(message.getSessionId());
         vo.setUserId(message.getUserId());
-        vo.setUserName(user.getName());
-        vo.setAvatarUrl(user.getAvatarUrl());
+        vo.setUserName(context.getUserName());
+        vo.setAvatarUrl(context.getAvatarUrl());
         vo.setContent(message.getContent());
         vo.setCreateTime(message.getCreateTime());
         return vo;
