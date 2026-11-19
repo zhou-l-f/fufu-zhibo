@@ -29,6 +29,7 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -68,6 +69,7 @@ public class LiveRoomServiceImpl implements LiveRoomService {
     private final SrsProperties srsProperties;
     private final AliOssUtil aliOssUtil;
     private final StringRedisTemplate stringRedisTemplate;
+    private final TransactionTemplate transactionTemplate;
 
     /**
      * 注册直播间：校验开播资格后分配唯一流名，重复调用返回已有直播间
@@ -105,23 +107,55 @@ public class LiveRoomServiceImpl implements LiveRoomService {
 
     /**
      * 申请开始直播：创建待开播场次并签发短效推流 token
+     *
+     * <p>封面 OSS 上传是网络 IO（最大 5MB），放在行锁事务外完成，
+     * 只有落库阶段才进入短事务并加行锁，避免上传期间阻塞该房间的封禁、开播与状态查询。
      */
     @Override
-    @Transactional
     public StartLiveVO startLive(Long userId, StartLiveDTO dto) {
         publisherValidator.check(userId);
 
+        // 锁外预检：尽快失败，避免为无效请求白白上传封面
+        LiveRoom snapshot = liveRoomMapper.selectOne(
+                Wrappers.<LiveRoom>lambdaQuery().eq(LiveRoom::getUserId, userId));
+        if (snapshot == null) {
+            throw new BaseException(MessageConstant.PUSH_ROOM_NOT_FOUND);
+        }
+        checkRoomStartable(snapshot);
+
+        String coverUrl = uploadCover(dto);
+
+        StartLiveContext context = transactionTemplate.execute(
+                status -> createPendingSession(userId, dto, coverUrl));
+        if (context == null) {
+            throw new BaseException(MessageConstant.PUSH_ROOM_NOT_FOUND);
+        }
+        LiveRoom room = context.room();
+        LiveSession session = context.session();
+
+        String token = PushTokenUtil.create(
+                pushProperties.getSecretKey(),
+                userId,
+                session.getId(),
+                room.getStreamName(),
+                pushProperties.getExpireTime());
+
+        log.info("申请开播成功: userId={}, roomId={}, sessionId={}, streamName={}, coverUrl={}",
+                userId, room.getId(), session.getId(), room.getStreamName(), coverUrl);
+        return buildStartLiveVO(room, session, token);
+    }
+
+    /**
+     * 行锁事务内完成校验、作废旧场次与新场次落库，执行时间只包含数据库操作
+     */
+    private StartLiveContext createPendingSession(Long userId, StartLiveDTO dto, String coverUrl) {
         // 行锁串行化同一用户的申请，避免并发创建多个待开播场次
         LiveRoom room = liveRoomMapper.getByUserIdForUpdate(userId);
         if (room == null) {
             throw new BaseException(MessageConstant.PUSH_ROOM_NOT_FOUND);
         }
-        if (LiveStatusConstant.ROOM_BANNED.equals(room.getStatus())) {
-            throw new BaseException(MessageConstant.PUSH_ROOM_BANNED);
-        }
-        if (LiveStatusConstant.ROOM_LIVE.equals(room.getStatus())) {
-            throw new BaseException(MessageConstant.LIVE_ALREADY_LIVE);
-        }
+        // 上传期间房间状态可能变化，加锁后需要重新校验
+        checkRoomStartable(room);
 
         LocalDateTime now = LocalDateTime.now(ZONE);
 
@@ -136,8 +170,6 @@ public class LiveRoomServiceImpl implements LiveRoomService {
                         .set(LiveSession::getEndReason, LiveStatusConstant.END_REASON_CANCELLED)
                         .set(LiveSession::getUpdateTime, now));
 
-        String coverUrl = uploadCover(dto);
-
         LiveSession session = new LiveSession();
         session.setRoomId(room.getId());
         session.setUserId(userId);
@@ -146,17 +178,22 @@ public class LiveRoomServiceImpl implements LiveRoomService {
         session.setStreamName(room.getStreamName());
         session.setStatus(LiveStatusConstant.SESSION_PENDING);
         liveSessionMapper.insert(session);
+        return new StartLiveContext(room, session);
+    }
 
-        String token = PushTokenUtil.create(
-                pushProperties.getSecretKey(),
-                userId,
-                session.getId(),
-                room.getStreamName(),
-                pushProperties.getExpireTime());
+    private void checkRoomStartable(LiveRoom room) {
+        if (LiveStatusConstant.ROOM_BANNED.equals(room.getStatus())) {
+            throw new BaseException(MessageConstant.PUSH_ROOM_BANNED);
+        }
+        if (LiveStatusConstant.ROOM_LIVE.equals(room.getStatus())) {
+            throw new BaseException(MessageConstant.LIVE_ALREADY_LIVE);
+        }
+    }
 
-        log.info("申请开播成功: userId={}, roomId={}, sessionId={}, streamName={}, coverUrl={}",
-                userId, room.getId(), session.getId(), room.getStreamName(), coverUrl);
-        return buildStartLiveVO(room, session, token);
+    /**
+     * 加锁事务内创建的场次及其直播间快照
+     */
+    private record StartLiveContext(LiveRoom room, LiveSession session) {
     }
 
     /**
