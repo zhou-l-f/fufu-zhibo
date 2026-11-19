@@ -4,7 +4,9 @@ import com.zlf.fufuzhibo.common.constant.JwtClaimsConstants;
 import com.zlf.fufuzhibo.common.constant.LiveStatusConstant;
 import com.zlf.fufuzhibo.common.properties.JwtProperties;
 import com.zlf.fufuzhibo.common.utils.JwtUtil;
+import com.zlf.fufuzhibo.pojo.entity.LiveRoom;
 import com.zlf.fufuzhibo.pojo.entity.LiveSession;
+import com.zlf.fufuzhibo.server.mapper.LiveRoomMapper;
 import com.zlf.fufuzhibo.server.mapper.LiveSessionMapper;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
@@ -34,6 +36,7 @@ public class LiveChatHandshakeInterceptor implements HandshakeInterceptor {
 
     private final JwtProperties jwtProperties;
     private final LiveSessionMapper liveSessionMapper;
+    private final LiveRoomMapper liveRoomMapper;
 
     @Override
     public boolean beforeHandshake(ServerHttpRequest request,
@@ -55,6 +58,14 @@ public class LiveChatHandshakeInterceptor implements HandshakeInterceptor {
                 || !roomId.equals(session.getRoomId())
                 || LiveStatusConstant.SESSION_ENDED.equals(session.getStatus())) {
             log.warn("聊天握手场次校验失败: roomId={}, sessionId={}", roomId, sessionId);
+            reject(response);
+            return false;
+        }
+
+        // 封禁中的直播间不允许建立聊天连接
+        LiveRoom room = liveRoomMapper.selectById(roomId);
+        if (room == null || LiveStatusConstant.ROOM_BANNED.equals(room.getStatus())) {
+            log.warn("聊天握手直播间已封禁: roomId={}, sessionId={}", roomId, sessionId);
             reject(response);
             return false;
         }
