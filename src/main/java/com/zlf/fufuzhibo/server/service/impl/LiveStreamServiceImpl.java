@@ -185,6 +185,18 @@ public class LiveStreamServiceImpl implements LiveStreamService {
                     streamName, clientId);
         }
 
+        // 事务未提交成功时释放推流锁，避免提交阶段失败后锁残留 24 小时导致后续无法推流
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCompletion(int status) {
+                    if (status != TransactionSynchronization.STATUS_COMMITTED) {
+                        releaseLock(streamName, clientId);
+                    }
+                }
+            });
+        }
+
         try {
             publisherValidator.check(room.getUserId());
 
