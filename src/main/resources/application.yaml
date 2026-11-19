@@ -16,6 +16,9 @@ spring:
       host: ${fufu.redis.host}
       port: ${fufu.redis.port}
       database: ${fufu.redis.database}
+      # Redis 故障时快速失败（默认 60 秒会让 SRS 回调超时，推流无法降级）
+      connect-timeout: 1s
+      timeout: 1s
   jackson:
     time-zone: Asia/Shanghai
     date-format: yyyy-MM-dd HH:mm:ss
