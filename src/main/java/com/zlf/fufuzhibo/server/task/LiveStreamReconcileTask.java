@@ -6,12 +6,11 @@ import com.zlf.fufuzhibo.common.properties.SrsProperties;
 import com.zlf.fufuzhibo.server.service.LiveStreamService;
 import com.zlf.fufuzhibo.server.service.ViewerCountService;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 
-import java.time.Duration;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -33,16 +32,13 @@ public class LiveStreamReconcileTask {
     public LiveStreamReconcileTask(SrsProperties srsProperties,
                                    LiveStreamService liveStreamService,
                                    ViewerCountService viewerCountService,
-                                   JsonMapper jsonMapper) {
+                                   JsonMapper jsonMapper,
+                                   @Qualifier("srsApiRestTemplate") RestTemplate restTemplate) {
         this.srsProperties = srsProperties;
         this.liveStreamService = liveStreamService;
         this.viewerCountService = viewerCountService;
         this.jsonMapper = jsonMapper;
-
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(Duration.ofSeconds(3));
-        factory.setReadTimeout(Duration.ofSeconds(5));
-        this.restTemplate = new RestTemplate(factory);
+        this.restTemplate = restTemplate;
     }
 
     @Scheduled(fixedDelayString = "${fufu.srs.reconcile-interval-ms:30000}")

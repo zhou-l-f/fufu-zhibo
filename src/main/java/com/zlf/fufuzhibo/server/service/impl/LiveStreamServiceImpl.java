@@ -21,7 +21,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -100,6 +99,7 @@ public class LiveStreamServiceImpl implements LiveStreamService {
     private final ViewerCountService viewerCountService;
     private final LiveStatusEventPublisher liveStatusEventPublisher;
     private final TransactionTemplate transactionTemplate;
+    private final RestTemplate srsKickRestTemplate;
 
     /**
      * 推流开始：校验 token 与场次，首次推流绑定 clientId，断流宽限期内允许重连恢复
@@ -657,11 +657,9 @@ public class LiveStreamServiceImpl implements LiveStreamService {
             return;
         }
         try {
-            SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-            factory.setConnectTimeout(Duration.ofSeconds(2));
-            factory.setReadTimeout(Duration.ofSeconds(3));
-            new RestTemplate(factory)
-                    .delete("http://" + apiHost + ":" + apiPort + "/api/v1/clients/" + clientId);
+            // 复用同一 RestTemplate，连接 2 秒 / 读取 3 秒，避免每次踢流新建实例
+            srsKickRestTemplate.delete(
+                    "http://" + apiHost + ":" + apiPort + "/api/v1/clients/" + clientId);
             log.info("已通知 SRS 断开推流: clientId={}", clientId);
         } catch (Exception e) {
             log.error("通知 SRS 踢流失败，OBS 可能仍在推流: clientId={}", clientId, e);
