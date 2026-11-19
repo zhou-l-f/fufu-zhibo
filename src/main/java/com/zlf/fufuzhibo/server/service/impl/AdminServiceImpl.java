@@ -14,6 +14,7 @@ import com.zlf.fufuzhibo.pojo.vo.AdminLoginVO;
 import com.zlf.fufuzhibo.pojo.vo.AdminProfileVO;
 import com.zlf.fufuzhibo.server.mapper.AdminMapper;
 import com.zlf.fufuzhibo.server.service.AdminService;
+import com.zlf.fufuzhibo.server.service.LoginAttemptLimiter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -30,6 +31,7 @@ public class AdminServiceImpl implements AdminService {
 
     private final AdminMapper adminMapper;
     private final JwtProperties jwtProperties;
+    private final LoginAttemptLimiter loginAttemptLimiter;
 
     public static final BCryptPasswordEncoder passwordEncoder =new BCryptPasswordEncoder();
 
@@ -43,8 +45,12 @@ public class AdminServiceImpl implements AdminService {
     public AdminLoginVO login(AdminLoginDTO adminLoginDTO) {
 
         String username = adminLoginDTO.getUsername();
+        // 连续失败达到阈值后锁定，避免被撞库
+        loginAttemptLimiter.check("admin", username);
+
         Admin admin = adminMapper.getByUsername(username);
         if(admin == null){
+            loginAttemptLimiter.recordFailure("admin", username);
             throw new AccountNotFoundException(MessageConstant.ACCOUNT_NOT_FOUND);
         }
 
@@ -52,6 +58,7 @@ public class AdminServiceImpl implements AdminService {
 
         boolean matched = passwordEncoder.matches(password, admin.getPassword());
         if (!matched) {
+            loginAttemptLimiter.recordFailure("admin", username);
             throw new PasswordErrorException(MessageConstant.PASSWORD_ERROR);
         }
 
@@ -59,6 +66,7 @@ public class AdminServiceImpl implements AdminService {
         {
             throw new AccountLockedException(MessageConstant.ACCOUNT_LOCKED);
         }
+        loginAttemptLimiter.clear("admin", username);
 
         // 记录最近登录时间，供管理员信息接口展示
         Admin loginTimeUpdate = new Admin();

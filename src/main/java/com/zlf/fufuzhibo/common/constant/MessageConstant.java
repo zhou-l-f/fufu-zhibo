@@ -7,6 +7,7 @@ public class MessageConstant {
     public static final String UNKNOWN_ERROR = "未知错误";
     public static final String ALREADY_EXISTS = "用户已经存在";
     public static final String ACCOUNT_LOCKED = "账户被锁定";
+    public static final String LOGIN_ATTEMPTS_EXCEEDED = "登录失败次数过多，请 15 分钟后再试";
     public static final String USERNAME_ALREADY_EXISTS = "账号已存在";
     public static final String IDENTITY_ALREADY_EXISTS = "该用户已完成实名认证";
     public static final String PHONE_ALREADY_BOUND = "手机号已被其他用户绑定";

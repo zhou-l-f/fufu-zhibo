@@ -23,6 +23,7 @@ import com.zlf.fufuzhibo.pojo.vo.UserLoginVO;
 import com.zlf.fufuzhibo.pojo.vo.UserProfileVO;
 import com.zlf.fufuzhibo.server.mapper.UserIdentityMapper;
 import com.zlf.fufuzhibo.server.mapper.UserMapper;
+import com.zlf.fufuzhibo.server.service.LoginAttemptLimiter;
 import com.zlf.fufuzhibo.server.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -48,6 +49,7 @@ public class UserServiceImpl implements UserService {
     private final CryptoUtil cryptoUtil;
     private final AliOssUtil aliOssUtil;
     private final JwtProperties jwtProperties;
+    private final LoginAttemptLimiter loginAttemptLimiter;
 
     private static final Pattern PHONE_PATTERN = Pattern.compile("^1[3-9]\\d{9}$");
     private static final Pattern ID_CARD_PATTERN = Pattern.compile("^\\d{17}[\\dX]$");
@@ -64,10 +66,13 @@ public class UserServiceImpl implements UserService {
     @Override
     public UserLoginVO login(UserLoginDTO userLoginDTO) {
         String username = userLoginDTO.getUsername();
+        // 连续失败达到阈值后锁定，避免被撞库
+        loginAttemptLimiter.check("user", username);
 
         User user = userMapper.getByUsername(username);
 
         if(user == null){
+            loginAttemptLimiter.recordFailure("user", username);
             throw new AccountNotFoundException(MessageConstant.ACCOUNT_NOT_FOUND);
         }
         
@@ -75,6 +80,7 @@ public class UserServiceImpl implements UserService {
         String password = userLoginDTO.getPassword();
         boolean matched = passwordEncoder.matches(password, user.getPassword());
         if (!matched) {
+            loginAttemptLimiter.recordFailure("user", username);
             throw new PasswordErrorException(MessageConstant.PASSWORD_ERROR);
         }
 
@@ -82,6 +88,7 @@ public class UserServiceImpl implements UserService {
         {
             throw new AccountLockedException(MessageConstant.ACCOUNT_LOCKED);
         }
+        loginAttemptLimiter.clear("user", username);
         userMapper.updateLastLoginTime(user.getId(), LocalDateTime.now(ZONE));
 
         //生成JWT令牌
