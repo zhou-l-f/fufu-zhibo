@@ -193,6 +193,13 @@ public class ChatServiceImpl implements ChatService {
     private long nextSeq(Long sessionId) {
         String key = SEQ_KEY_PREFIX + sessionId;
         try {
+            // Redis 重启/淘汰后序号键会丢失，若直接从 1 开始会与已落库消息冲突并被幂等写入静默丢弃
+            if (!Boolean.TRUE.equals(stringRedisTemplate.hasKey(key))) {
+                Long maxSeq = liveMessageMapper.selectMaxSeq(sessionId);
+                stringRedisTemplate.opsForValue().setIfAbsent(
+                        key, String.valueOf(maxSeq == null ? 0L : maxSeq),
+                        Duration.ofSeconds(SEQ_TTL_SECONDS));
+            }
             Long seq = stringRedisTemplate.execute(
                     NEXT_SEQ_SCRIPT, List.of(key), String.valueOf(SEQ_TTL_SECONDS));
             if (seq == null) {

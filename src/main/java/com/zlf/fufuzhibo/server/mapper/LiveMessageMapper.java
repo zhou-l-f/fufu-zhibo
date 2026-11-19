@@ -5,6 +5,7 @@ import com.zlf.fufuzhibo.pojo.entity.LiveMessage;
 import com.zlf.fufuzhibo.pojo.vo.ChatMessageVO;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
 
@@ -29,4 +30,12 @@ public interface LiveMessageMapper extends BaseMapper<LiveMessage> {
      * @return 实际写入行数
      */
     int insertBatch(@Param("list") List<LiveMessage> messages);
+
+    /**
+     * 查询场次已落库的最大消息序号，Redis 序号键丢失后用于恢复计数基准
+     *
+     * @param sessionId 直播场次 id
+     */
+    @Select("SELECT MAX(seq) FROM live_message WHERE session_id = #{sessionId}")
+    Long selectMaxSeq(@Param("sessionId") Long sessionId);
 }

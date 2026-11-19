@@ -58,6 +58,11 @@ public class ChatMessageFlushTask {
 
         try {
             int inserted = liveMessageMapper.insertBatch(messages);
+            if (inserted < messages.size()) {
+                // 幂等写入会静默忽略重复 (session_id, seq)，数量不一致时说明序号发生冲突
+                log.warn("聊天消息批量落库存在重复序号被忽略: 解析={}, 写入={}",
+                        messages.size(), inserted);
+            }
             log.debug("聊天消息批量落库: 取出={}, 解析={}, 写入={}",
                     payloads.size(), messages.size(), inserted);
         } catch (Exception e) {
