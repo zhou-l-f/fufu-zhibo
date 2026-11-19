@@ -81,6 +81,8 @@ fufu:
     max-connections: 5000
     heartbeat-interval-ms: 30000
     idle-timeout-ms: 120000
+    # 待落库缓冲队列上限，数据库故障期间满队列丢弃新消息
+    buffer-max-size: 10000
 
   srs:
     callback-secret: ${fufu.srs.callback-secret}

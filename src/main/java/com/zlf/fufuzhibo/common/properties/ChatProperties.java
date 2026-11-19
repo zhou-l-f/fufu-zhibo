@@ -49,4 +49,9 @@ public class ChatProperties {
      * 单次批量入库的最大消息条数
      */
     private Integer flushBatchSize = 500;
+
+    /**
+     * 待落库缓冲队列上限，数据库故障期间队列不会无限增长
+     */
+    private Integer bufferMaxSize = 10000;
 }

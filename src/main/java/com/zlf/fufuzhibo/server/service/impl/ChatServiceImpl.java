@@ -29,6 +29,7 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 聊天消息：以直播场次为维度，发言只写 Redis（最近消息 + 缓冲队列）并立即广播，
@@ -77,6 +78,23 @@ public class ChatServiceImpl implements ChatService {
 
     private static final int MAX_PAGE_SIZE = 50;
     private static final int MESSAGE_STATUS_NORMAL = 1;
+
+    /**
+     * 入队脚本：先判断长度再写入，超过上限直接拒绝，保证缓冲区有界
+     */
+    private static final DefaultRedisScript<Long> ENQUEUE_BUFFER_SCRIPT = new DefaultRedisScript<>(
+            "local len = redis.call('llen', KEYS[1]) "
+                    + "if len >= tonumber(ARGV[1]) then return 0 end "
+                    + "redis.call('rpush', KEYS[1], ARGV[2]) "
+                    + "return 1",
+            Long.class);
+
+    /**
+     * 缓冲队列丢弃告警的最小间隔，避免故障期间日志刷屏
+     */
+    private static final long DROP_WARN_INTERVAL_MS = 10_000L;
+
+    private final AtomicLong lastDropWarnAt = new AtomicLong();
 
     private final LiveSessionMapper liveSessionMapper;
     private final LiveMessageMapper liveMessageMapper;
@@ -230,16 +248,41 @@ public class ChatServiceImpl implements ChatService {
     }
 
     /**
-     * 消息放入 Redis 缓冲队列，由定时任务批量写入 MySQL
+     * 消息放入 Redis 缓冲队列，由定时任务批量写入 MySQL；
+     * 队列达到上限时丢弃新消息并告警，避免数据库故障期间无限增长
      */
     private void enqueue(LiveMessage message) {
+        String payload;
         try {
-            stringRedisTemplate.opsForList()
-                    .rightPush(BUFFER_KEY, jsonMapper.writeValueAsString(message));
+            payload = jsonMapper.writeValueAsString(message);
+        } catch (Exception e) {
+            log.error("序列化聊天消息失败: sessionId={}, seq={}",
+                    message.getSessionId(), message.getSeq(), e);
+            throw new BaseException(MessageConstant.CHAT_SEND_FAILED);
+        }
+        try {
+            Long accepted = stringRedisTemplate.execute(ENQUEUE_BUFFER_SCRIPT,
+                    List.of(BUFFER_KEY),
+                    String.valueOf(chatProperties.getBufferMaxSize()), payload);
+            if (accepted != null && accepted == 0L) {
+                warnBufferFull(message.getSessionId());
+            }
         } catch (Exception e) {
             log.error("写入聊天缓冲区失败: sessionId={}, seq={}",
                     message.getSessionId(), message.getSeq(), e);
             throw new BaseException(MessageConstant.CHAT_SEND_FAILED);
+        }
+    }
+
+    /**
+     * 缓冲队列已满的告警限频，避免数据库故障期间日志刷屏
+     */
+    private void warnBufferFull(Long sessionId) {
+        long now = System.currentTimeMillis();
+        long last = lastDropWarnAt.get();
+        if (now - last >= DROP_WARN_INTERVAL_MS && lastDropWarnAt.compareAndSet(last, now)) {
+            log.warn("聊天缓冲队列已满，丢弃新消息: sessionId={}, max={}",
+                    sessionId, chatProperties.getBufferMaxSize());
         }
     }
 

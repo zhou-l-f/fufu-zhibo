@@ -73,6 +73,9 @@ public class ChatMessageFlushTask {
             try {
                 stringRedisTemplate.opsForList()
                         .leftPushAll(ChatServiceImpl.BUFFER_KEY, retry);
+                // 回滚同样受队列上限约束，避免数据库故障期间无限增长
+                stringRedisTemplate.opsForList().trim(ChatServiceImpl.BUFFER_KEY,
+                        0, chatProperties.getBufferMaxSize() - 1L);
             } catch (Exception ex) {
                 log.error("回滚聊天缓冲区失败，本批消息可能丢失: size={}", payloads.size(), ex);
             }
