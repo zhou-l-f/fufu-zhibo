@@ -36,7 +36,7 @@
         INNER JOIN live_session s ON s.room_id = r.id
         INNER JOIN `user` u ON u.id = r.user_id
         WHERE r.id = #{roomId}
-          AND s.status IN (0, 1)
+          AND s.status = 1
           AND r.status &lt;&gt; 2
         ORDER BY s.status DESC, s.start_time DESC, s.id DESC
         LIMIT 1
