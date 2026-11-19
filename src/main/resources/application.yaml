@@ -65,6 +65,10 @@ fufu:
     aes-key: ${fufu.crypto.aes-key}
     hmac-key: ${fufu.crypto.hmac-key}
 
+  # 定时任务线程池大小：避免对账等任务阻塞时挤占聊天落库
+  scheduler:
+    pool-size: 8
+
   push:
     secret-key: ${fufu.push.secret-key}
     expire-time: ${fufu.push.expire-time}
