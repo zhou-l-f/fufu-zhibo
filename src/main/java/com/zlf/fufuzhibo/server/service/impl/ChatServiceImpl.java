@@ -3,6 +3,7 @@ package com.zlf.fufuzhibo.server.service.impl;
 import com.zlf.fufuzhibo.common.constant.ErrorCode;
 import com.zlf.fufuzhibo.common.constant.LiveStatusConstant;
 import com.zlf.fufuzhibo.common.constant.MessageConstant;
+import com.zlf.fufuzhibo.common.constant.StatusConstant;
 import com.zlf.fufuzhibo.common.exception.BaseException;
 import com.zlf.fufuzhibo.common.properties.ChatProperties;
 import com.zlf.fufuzhibo.pojo.entity.LiveMessage;
@@ -119,6 +120,10 @@ public class ChatServiceImpl implements ChatService {
         User user = userMapper.selectById(userId);
         if (user == null) {
             throw new BaseException(MessageConstant.ACCOUNT_NOT_FOUND);
+        }
+        // 已登录但账号被禁用的用户不允许继续发言
+        if (!StatusConstant.ENABLE.equals(user.getStatus())) {
+            throw new BaseException(MessageConstant.ACCOUNT_LOCKED);
         }
 
         LiveMessage message = new LiveMessage();
