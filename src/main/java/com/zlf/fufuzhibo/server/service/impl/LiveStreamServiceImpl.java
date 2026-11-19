@@ -73,6 +73,11 @@ public class LiveStreamServiceImpl implements LiveStreamService {
     private static final int PENDING_END_BATCH_SIZE = 200;
 
     /**
+     * 待开播场次的默认自动作废时长（分钟）
+     */
+    private static final int DEFAULT_PENDING_EXPIRE_MINUTES = 30;
+
+    /**
      * 直播状态帧类型
      */
     private static final String FRAME_RECOVERING = "live_recovering";
@@ -560,6 +565,47 @@ public class LiveStreamServiceImpl implements LiveStreamService {
             }
         }
         return closed;
+    }
+
+    /**
+     * 作废申请开播后长时间未推流的场次，避免主播端一直显示待开播
+     *
+     * <p>逐场独立事务并带状态与 clientId 条件，推流已开始或已被新场次取代时不会误作废。
+     */
+    @Override
+    public int cancelStalePendingSessions() {
+        Integer configured = pushProperties.getPendingExpireMinutes();
+        int expireMinutes = configured == null || configured <= 0
+                ? DEFAULT_PENDING_EXPIRE_MINUTES : configured;
+        LocalDateTime deadline = LocalDateTime.now(ZONE).minusMinutes(expireMinutes);
+        List<LiveSession> staleSessions = liveSessionMapper.selectList(
+                Wrappers.<LiveSession>lambdaQuery()
+                        .eq(LiveSession::getStatus, LiveStatusConstant.SESSION_PENDING)
+                        .lt(LiveSession::getCreateTime, deadline)
+                        .orderByAsc(LiveSession::getId)
+                        .last("LIMIT " + PENDING_END_BATCH_SIZE));
+        int cancelled = 0;
+        for (LiveSession session : staleSessions) {
+            Boolean updated = transactionTemplate.execute(status -> {
+                LocalDateTime now = LocalDateTime.now(ZONE);
+                LambdaUpdateWrapper<LiveSession> update = Wrappers.<LiveSession>lambdaUpdate()
+                        .eq(LiveSession::getId, session.getId())
+                        .eq(LiveSession::getStatus, LiveStatusConstant.SESSION_PENDING)
+                        .isNull(LiveSession::getClientId)
+                        .set(LiveSession::getStatus, LiveStatusConstant.SESSION_ENDED)
+                        .set(LiveSession::getEndTime, now)
+                        .set(LiveSession::getEndReason, LiveStatusConstant.END_REASON_CANCELLED)
+                        .set(LiveSession::getDuration, 0)
+                        .set(LiveSession::getUpdateTime, now);
+                return liveSessionMapper.update(null, update) == 1;
+            });
+            if (Boolean.TRUE.equals(updated)) {
+                cancelled++;
+                log.info("待开播场次超时作废: sessionId={}, roomId={}, stream={}",
+                        session.getId(), session.getRoomId(), session.getStreamName());
+            }
+        }
+        return cancelled;
     }
 
     /**

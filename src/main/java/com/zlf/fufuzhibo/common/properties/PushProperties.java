@@ -31,4 +31,9 @@ public class PushProperties {
      * 断流后延迟结束场次的宽限期（秒），期间 OBS 重连可无缝续播
      */
     private Integer endGraceSeconds;
+
+    /**
+     * 待开播场次自动作废时长（分钟），超过该时长仍未推流则取消场次
+     */
+    private Integer pendingExpireMinutes = 30;
 }

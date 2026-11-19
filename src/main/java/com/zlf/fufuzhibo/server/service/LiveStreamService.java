@@ -38,6 +38,13 @@ public interface LiveStreamService {
     int finalizePendingEnds();
 
     /**
+     * 作废申请开播后长时间未推流的待开播场次
+     *
+     * @return 本次作废的场次数量
+     */
+    int cancelStalePendingSessions();
+
+    /**
      * 与 SRS 的在线流列表对账，回收回调丢失导致的僵尸场次
      *
      * @param activeStreams SRS 当前在线流集合，元素格式：app/streamName

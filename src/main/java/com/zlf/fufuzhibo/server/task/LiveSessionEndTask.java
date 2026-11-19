@@ -28,4 +28,19 @@ public class LiveSessionEndTask {
             log.error("处理断流宽限期场次失败", e);
         }
     }
+
+    /**
+     * 定期作废申请开播后长时间未推流的场次
+     */
+    @Scheduled(fixedDelayString = "${fufu.push.pending-scan-interval-ms:60000}")
+    public void cancelStalePendingSessions() {
+        try {
+            int cancelled = liveStreamService.cancelStalePendingSessions();
+            if (cancelled > 0) {
+                log.info("待开播场次超时作废数量={}", cancelled);
+            }
+        } catch (Exception e) {
+            log.error("处理待开播超时场次失败", e);
+        }
+    }
 }
