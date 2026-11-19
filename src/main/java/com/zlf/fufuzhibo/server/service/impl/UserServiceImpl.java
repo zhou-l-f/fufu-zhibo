@@ -26,6 +26,7 @@ import com.zlf.fufuzhibo.server.mapper.UserMapper;
 import com.zlf.fufuzhibo.server.service.LoginAttemptLimiter;
 import com.zlf.fufuzhibo.server.service.UserService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -150,7 +151,12 @@ public class UserServiceImpl implements UserService {
         user.setGender(0);
         user.setStatus(StatusConstant.ENABLE);
 
-        userMapper.insert(user);
+        try {
+            userMapper.insert(user);
+        } catch (DuplicateKeyException e) {
+            // 并发注册时唯一索引兜底
+            throw new BaseException(MessageConstant.USERNAME_ALREADY_EXISTS);
+        }
     }
 
     /**
@@ -229,7 +235,22 @@ public class UserServiceImpl implements UserService {
         // 提交即认证通过
         userIdentity.setStatus(StatusConstant.ENABLE);
 
-        userIdentityMapper.insert(userIdentity);
+        try {
+            userIdentityMapper.insert(userIdentity);
+        } catch (DuplicateKeyException e) {
+            // 并发提交同一证件时由唯一索引兜底，回查冲突字段给出准确提示
+            Long submittedConflict = userIdentityMapper.selectCount(
+                    Wrappers.<UserIdentity>lambdaQuery().eq(UserIdentity::getUserId, userId));
+            if (submittedConflict != null && submittedConflict > 0) {
+                throw new BaseException(MessageConstant.IDENTITY_ALREADY_EXISTS);
+            }
+            Long phoneConflict = userIdentityMapper.selectCount(
+                    Wrappers.<UserIdentity>lambdaQuery().eq(UserIdentity::getPhoneHash, phoneHash));
+            if (phoneConflict != null && phoneConflict > 0) {
+                throw new BaseException(MessageConstant.PHONE_ALREADY_BOUND);
+            }
+            throw new BaseException(MessageConstant.ID_CARD_ALREADY_BOUND);
+        }
     }
 
     private void checkPhone(String phone) {
