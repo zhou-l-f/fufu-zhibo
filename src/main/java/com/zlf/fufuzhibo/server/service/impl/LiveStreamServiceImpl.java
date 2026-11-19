@@ -177,12 +177,12 @@ public class LiveStreamServiceImpl implements LiveStreamService {
                 .setIfAbsent(lockKey, clientId, PUBLISH_LOCK_TTL);
         if (!Boolean.TRUE.equals(locked)) {
             String holder = stringRedisTemplate.opsForValue().get(lockKey);
-            if (clientId.equals(holder)) {
-                log.info("on_publish 重复回调，锁已由同一 clientId 持有: stream={}, clientId={}",
-                        streamName, clientId);
-                return;
+            if (!clientId.equals(holder)) {
+                throw new BaseException(MessageConstant.PUSH_STREAM_OCCUPIED);
             }
-            throw new BaseException(MessageConstant.PUSH_STREAM_OCCUPIED);
+            // 同一 clientId 的重复回调：继续完成场次落库，避免上次提交失败后状态一直停在待开播
+            log.info("on_publish 重复回调，锁已由同一 clientId 持有，继续落库: stream={}, clientId={}",
+                    streamName, clientId);
         }
 
         try {
