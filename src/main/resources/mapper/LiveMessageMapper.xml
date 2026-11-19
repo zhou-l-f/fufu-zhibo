@@ -8,6 +8,7 @@
             resultType="com.zlf.fufuzhibo.pojo.vo.ChatMessageVO">
         SELECT
             m.id AS id,
+            m.seq AS seq,
             m.room_id AS roomId,
             m.session_id AS sessionId,
             m.user_id AS userId,
@@ -17,13 +18,24 @@
             m.create_time AS createTime
         FROM live_message m
         INNER JOIN `user` u ON u.id = m.user_id
-        WHERE m.room_id = #{roomId}
+        WHERE m.session_id = #{sessionId}
           AND m.status = 1
-        <if test="lastId != null">
-            AND m.id &lt; #{lastId}
+        <if test="lastSeq != null">
+            AND m.seq &lt; #{lastSeq}
         </if>
-        ORDER BY m.id DESC
+        ORDER BY m.seq DESC
         LIMIT #{size}
     </select>
+
+    <insert id="insertBatch">
+        INSERT INTO live_message
+            (room_id, session_id, seq, user_id, content, status, create_time)
+        VALUES
+        <foreach collection="list" item="m" separator=",">
+            (#{m.roomId}, #{m.sessionId}, #{m.seq}, #{m.userId},
+             #{m.content}, #{m.status}, #{m.createTime})
+        </foreach>
+        ON DUPLICATE KEY UPDATE id = id
+    </insert>
 
 </mapper>

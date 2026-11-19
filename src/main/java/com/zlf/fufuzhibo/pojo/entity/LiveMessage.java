@@ -23,10 +23,15 @@ public class LiveMessage {
     private Long roomId;
 
     /**
-     * 所属直播场次，发送时取当前直播中的场次，可为空
+     * 所属直播场次，消息按场次隔离，不同场次的聊天不会串
      */
     @TableField("session_id")
     private Long sessionId;
+
+    /**
+     * 场次内消息序号，由 Redis INCR 生成，作为历史分页游标
+     */
+    private Long seq;
 
     @TableField("user_id")
     private Long userId;

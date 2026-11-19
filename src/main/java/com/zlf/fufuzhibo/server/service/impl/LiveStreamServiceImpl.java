@@ -11,6 +11,7 @@ import com.zlf.fufuzhibo.common.utils.PushTokenUtil;
 import com.zlf.fufuzhibo.pojo.dto.SrsCallbackDTO;
 import com.zlf.fufuzhibo.pojo.entity.LiveRoom;
 import com.zlf.fufuzhibo.pojo.entity.LiveSession;
+import com.zlf.fufuzhibo.server.event.LiveStatusEventPublisher;
 import com.zlf.fufuzhibo.server.mapper.LiveRoomMapper;
 import com.zlf.fufuzhibo.server.mapper.LiveSessionMapper;
 import com.zlf.fufuzhibo.server.service.LiveStreamService;
@@ -23,6 +24,9 @@ import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.RestTemplate;
 
 import java.net.URLDecoder;
@@ -31,7 +35,9 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -62,6 +68,18 @@ public class LiveStreamServiceImpl implements LiveStreamService {
     private static final long RECONCILE_START_GRACE_SECONDS = 15;
 
     /**
+     * 单轮最多处理的到期场次数，避免一次扫描长时间占用线程
+     */
+    private static final int PENDING_END_BATCH_SIZE = 200;
+
+    /**
+     * 直播状态帧类型
+     */
+    private static final String FRAME_RECOVERING = "live_recovering";
+    private static final String FRAME_RESUMED = "live_resumed";
+    private static final String FRAME_END = "live_end";
+
+    /**
      * 仅当锁的持有者仍是当前 clientId 时才删除，避免误删新的推流锁
      */
     private static final DefaultRedisScript<Long> RELEASE_LOCK_SCRIPT = new DefaultRedisScript<>(
@@ -75,6 +93,8 @@ public class LiveStreamServiceImpl implements LiveStreamService {
     private final PushProperties pushProperties;
     private final SrsProperties srsProperties;
     private final ViewerCountService viewerCountService;
+    private final LiveStatusEventPublisher liveStatusEventPublisher;
+    private final TransactionTemplate transactionTemplate;
 
     /**
      * 推流开始：校验 token 与场次，首次推流绑定 clientId，断流宽限期内允许重连恢复
@@ -201,6 +221,10 @@ public class LiveStreamServiceImpl implements LiveStreamService {
 
             clearPendingEnd(streamName);
 
+            publishAfterCommit(room.getId(),
+                    liveResumedFrame(room.getId(), sessionId,
+                            session.getStartTime() == null ? now : session.getStartTime()));
+
             log.info("推流{}: stream={}, userId={}, sessionId={}, clientId={}",
                     reconnect ? "重连恢复" : takeoverSession ? "宽限期接管" : "开始",
                     streamName, room.getUserId(), sessionId, clientId);
@@ -236,34 +260,72 @@ public class LiveStreamServiceImpl implements LiveStreamService {
 
         long graceSeconds = endGraceSeconds();
         if (graceSeconds <= 0 || !markPendingEnd(session.getStreamName(), clientId, graceSeconds)) {
-            finalizeSession(session, LocalDateTime.now(ZONE));
+            LiveEnded ended = finalizeSession(session, LocalDateTime.now(ZONE));
+            if (ended != null) {
+                publishAfterCommit(ended.roomId(), liveEndFrame(ended));
+            }
             return;
         }
 
         // 释放推流锁，允许 OBS 以新连接重新推流并在宽限期内接管本场次
         releaseLock(session.getStreamName(), clientId);
+        publishAfterCommit(session.getRoomId(),
+                liveRecoveringFrame(session, graceSeconds));
         log.info("推流断开，进入 {} 秒宽限期: stream={}, sessionId={}, clientId={}",
                 graceSeconds, session.getStreamName(), session.getId(), clientId);
     }
 
     /**
      * 落库结束场次并恢复直播间状态，同时清理在线人数与待结束标记
+     *
+     * <p>场次使用条件更新，只有状态仍为进行中且 clientId 未被新连接替换时才结束，
+     * 避免宽限期到期与 OBS 重连并发时误结束场次。
+     *
+     * @return 成功结束时返回结束信息；场次已被接管或已结束时返回 null
      */
-    private void finalizeSession(LiveSession session, LocalDateTime now) {
-        LiveSession sessionUpdate = new LiveSession();
-        sessionUpdate.setId(session.getId());
-        sessionUpdate.setStatus(LiveStatusConstant.SESSION_ENDED);
-        sessionUpdate.setEndTime(now);
-        sessionUpdate.setEndReason(LiveStatusConstant.END_REASON_NORMAL);
+    private LiveEnded finalizeSession(LiveSession session, LocalDateTime now) {
+        int duration = 0;
         if (session.getStartTime() != null) {
             long seconds = Duration.between(session.getStartTime(), now).getSeconds();
-            sessionUpdate.setDuration((int) Math.max(seconds, 0));
-        } else {
-            sessionUpdate.setDuration(0);
+            duration = (int) Math.max(seconds, 0);
         }
-        liveSessionMapper.updateById(sessionUpdate);
 
-        // 仅当直播间仍由该 client 推流时才回写，避免覆盖已经开始的下一路推流
+        LambdaUpdateWrapper<LiveSession> sessionUpdate = Wrappers.<LiveSession>lambdaUpdate()
+                .eq(LiveSession::getId, session.getId())
+                .in(LiveSession::getStatus,
+                        LiveStatusConstant.SESSION_PENDING, LiveStatusConstant.SESSION_LIVE)
+                .set(LiveSession::getStatus, LiveStatusConstant.SESSION_ENDED)
+                .set(LiveSession::getEndTime, now)
+                .set(LiveSession::getEndReason, LiveStatusConstant.END_REASON_NORMAL)
+                .set(LiveSession::getDuration, duration)
+                .set(LiveSession::getUpdateTime, now);
+        if (session.getClientId() == null) {
+            sessionUpdate.isNull(LiveSession::getClientId);
+        } else {
+            sessionUpdate.eq(LiveSession::getClientId, session.getClientId());
+        }
+        if (liveSessionMapper.update(null, sessionUpdate) != 1) {
+            clearPendingEnd(session.getStreamName());
+            log.info("场次已被接管或已结束，跳过: stream={}, sessionId={}",
+                    session.getStreamName(), session.getId());
+            return null;
+        }
+
+        resetRoom(session, now);
+        releaseLock(session.getStreamName(), session.getClientId());
+        viewerCountService.clear(session.getStreamName());
+        clearPendingEnd(session.getStreamName());
+
+        log.info("推流结束: stream={}, sessionId={}, clientId={}",
+                session.getStreamName(), session.getId(), session.getClientId());
+        return new LiveEnded(session.getRoomId(), session.getId(),
+                LiveStatusConstant.END_REASON_NORMAL, duration, now);
+    }
+
+    /**
+     * 仅当直播间仍由该场次推流时才回写，避免覆盖已经开始的下一路推流
+     */
+    private void resetRoom(LiveSession session, LocalDateTime now) {
         LambdaUpdateWrapper<LiveRoom> roomUpdate = Wrappers.<LiveRoom>lambdaUpdate()
                 .eq(LiveRoom::getId, session.getRoomId())
                 .set(LiveRoom::getStatus, LiveStatusConstant.ROOM_NOT_STARTED)
@@ -276,13 +338,6 @@ public class LiveStreamServiceImpl implements LiveStreamService {
             roomUpdate.eq(LiveRoom::getCurrentClientId, session.getClientId());
         }
         liveRoomMapper.update(null, roomUpdate);
-
-        releaseLock(session.getStreamName(), session.getClientId());
-        viewerCountService.clear(session.getStreamName());
-        clearPendingEnd(session.getStreamName());
-
-        log.info("推流结束: stream={}, sessionId={}, clientId={}",
-                session.getStreamName(), session.getId(), session.getClientId());
     }
 
     /**
@@ -363,35 +418,24 @@ public class LiveStreamServiceImpl implements LiveStreamService {
 
         LocalDateTime now = LocalDateTime.now(ZONE);
         boolean wasLive = LiveStatusConstant.SESSION_LIVE.equals(session.getStatus());
+        Integer endReason = wasLive
+                ? LiveStatusConstant.END_REASON_MANUAL
+                : LiveStatusConstant.END_REASON_CANCELLED;
+        int duration = 0;
+        if (wasLive && session.getStartTime() != null) {
+            long seconds = Duration.between(session.getStartTime(), now).getSeconds();
+            duration = (int) Math.max(seconds, 0);
+        }
 
         LiveSession sessionUpdate = new LiveSession();
         sessionUpdate.setId(session.getId());
         sessionUpdate.setStatus(LiveStatusConstant.SESSION_ENDED);
         sessionUpdate.setEndTime(now);
-        sessionUpdate.setEndReason(wasLive
-                ? LiveStatusConstant.END_REASON_MANUAL
-                : LiveStatusConstant.END_REASON_CANCELLED);
-        if (wasLive && session.getStartTime() != null) {
-            long seconds = Duration.between(session.getStartTime(), now).getSeconds();
-            sessionUpdate.setDuration((int) Math.max(seconds, 0));
-        } else {
-            sessionUpdate.setDuration(0);
-        }
+        sessionUpdate.setEndReason(endReason);
+        sessionUpdate.setDuration(duration);
         liveSessionMapper.updateById(sessionUpdate);
 
-        // 仅当直播间仍由该场次推流时才回写，避免覆盖已经开始的下一路推流
-        LambdaUpdateWrapper<LiveRoom> roomUpdate = Wrappers.<LiveRoom>lambdaUpdate()
-                .eq(LiveRoom::getId, room.getId())
-                .set(LiveRoom::getStatus, LiveStatusConstant.ROOM_NOT_STARTED)
-                .set(LiveRoom::getCurrentClientId, null)
-                .set(LiveRoom::getLastEndTime, now)
-                .set(LiveRoom::getUpdateTime, now);
-        if (session.getClientId() == null) {
-            roomUpdate.isNull(LiveRoom::getCurrentClientId);
-        } else {
-            roomUpdate.eq(LiveRoom::getCurrentClientId, session.getClientId());
-        }
-        liveRoomMapper.update(null, roomUpdate);
+        resetRoom(session, now);
 
         releaseLock(session.getStreamName(), session.getClientId());
         viewerCountService.clear(session.getStreamName());
@@ -400,20 +444,26 @@ public class LiveStreamServiceImpl implements LiveStreamService {
             kickSrsClient(session.getClientId());
         }
 
+        publishAfterCommit(room.getId(), liveEndFrame(new LiveEnded(
+                room.getId(), session.getId(), endReason, duration, now)));
+
         log.info("主播主动结束直播: userId={}, sessionId={}, clientId={}, wasLive={}",
                 userId, session.getId(), session.getClientId(), wasLive);
     }
 
     /**
      * 结束宽限期已到期的场次；若期间已重连接管或已结束，只清理标记
+     *
+     * <p>ZREM 作为原子领取：多实例同时扫描时只有一个实例能处理该流；
+     * 每个场次使用独立事务，单场失败不影响同批其它场次。
      */
     @Override
-    @Transactional
     public int finalizePendingEnds() {
         Set<String> due;
         try {
             due = stringRedisTemplate.opsForZSet()
-                    .rangeByScore(PENDING_END_KEY, 0, System.currentTimeMillis(), 0, 50);
+                    .rangeByScore(PENDING_END_KEY, 0, System.currentTimeMillis(),
+                            0, PENDING_END_BATCH_SIZE);
         } catch (Exception e) {
             log.warn("读取待结束场次失败，跳过本轮", e);
             return 0;
@@ -429,10 +479,23 @@ public class LiveStreamServiceImpl implements LiveStreamService {
                 pendingClientId = stringRedisTemplate.opsForValue()
                         .get(PENDING_END_CLIENT_PREFIX + streamName);
             } catch (Exception e) {
+                // Redis 异常时保留标记，下一轮重试
                 continue;
             }
             if (isBlank(pendingClientId)) {
                 clearPendingEnd(streamName);
+                continue;
+            }
+
+            Long claimed;
+            try {
+                claimed = stringRedisTemplate.opsForZSet().remove(PENDING_END_KEY, streamName);
+            } catch (Exception e) {
+                log.warn("领取待结束场次失败，跳过: stream={}", streamName, e);
+                continue;
+            }
+            if (claimed == null || claimed == 0) {
+                // 已被其它实例领取，或期间重连清除了标记
                 continue;
             }
 
@@ -448,8 +511,18 @@ public class LiveStreamServiceImpl implements LiveStreamService {
                 continue;
             }
 
-            finalizeSession(session, LocalDateTime.now(ZONE));
-            closed++;
+            LocalDateTime now = LocalDateTime.now(ZONE);
+            LiveEnded ended;
+            try {
+                ended = transactionTemplate.execute(status -> finalizeSession(session, now));
+            } catch (Exception e) {
+                log.error("结束场次失败: stream={}, sessionId={}", streamName, session.getId(), e);
+                continue;
+            }
+            if (ended != null) {
+                closed++;
+                liveStatusEventPublisher.publish(ended.roomId(), liveEndFrame(ended));
+            }
         }
         return closed;
     }
@@ -507,34 +580,39 @@ public class LiveStreamServiceImpl implements LiveStreamService {
                 continue;
             }
 
-            LiveSession sessionUpdate = new LiveSession();
-            sessionUpdate.setId(session.getId());
-            sessionUpdate.setStatus(LiveStatusConstant.SESSION_ENDED);
-            sessionUpdate.setEndTime(now);
+            int duration = 0;
             if (session.getStartTime() != null) {
                 long seconds = Duration.between(session.getStartTime(), now).getSeconds();
-                sessionUpdate.setDuration((int) Math.max(seconds, 0));
+                duration = (int) Math.max(seconds, 0);
             }
-            sessionUpdate.setEndReason(LiveStatusConstant.END_REASON_TIMEOUT);
-            liveSessionMapper.updateById(sessionUpdate);
 
-            LambdaUpdateWrapper<LiveRoom> roomUpdate = Wrappers.<LiveRoom>lambdaUpdate()
-                    .eq(LiveRoom::getId, session.getRoomId())
-                    .set(LiveRoom::getStatus, LiveStatusConstant.ROOM_NOT_STARTED)
-                    .set(LiveRoom::getCurrentClientId, null)
-                    .set(LiveRoom::getLastEndTime, now)
-                    .set(LiveRoom::getUpdateTime, now);
+            // 条件更新：期间若已重连接管则放弃回收，避免误结束新连接
+            LambdaUpdateWrapper<LiveSession> sessionUpdate = Wrappers.<LiveSession>lambdaUpdate()
+                    .eq(LiveSession::getId, session.getId())
+                    .eq(LiveSession::getStatus, LiveStatusConstant.SESSION_LIVE)
+                    .set(LiveSession::getStatus, LiveStatusConstant.SESSION_ENDED)
+                    .set(LiveSession::getEndTime, now)
+                    .set(LiveSession::getDuration, duration)
+                    .set(LiveSession::getEndReason, LiveStatusConstant.END_REASON_TIMEOUT)
+                    .set(LiveSession::getUpdateTime, now);
             if (session.getClientId() == null) {
-                roomUpdate.isNull(LiveRoom::getCurrentClientId);
+                sessionUpdate.isNull(LiveSession::getClientId);
             } else {
-                roomUpdate.eq(LiveRoom::getCurrentClientId, session.getClientId());
+                sessionUpdate.eq(LiveSession::getClientId, session.getClientId());
             }
-            liveRoomMapper.update(null, roomUpdate);
+            if (liveSessionMapper.update(null, sessionUpdate) != 1) {
+                continue;
+            }
+
+            resetRoom(session, now);
 
             releaseLock(session.getStreamName(), session.getClientId());
             viewerCountService.clear(session.getStreamName());
             clearPendingEnd(session.getStreamName());
             closed++;
+            publishAfterCommit(session.getRoomId(), liveEndFrame(new LiveEnded(
+                    session.getRoomId(), session.getId(),
+                    LiveStatusConstant.END_REASON_TIMEOUT, duration, now)));
             log.warn("对账回收僵尸场次: stream={}, sessionId={}, clientId={}",
                     session.getStreamName(), session.getId(), session.getClientId());
         }
@@ -555,6 +633,65 @@ public class LiveStreamServiceImpl implements LiveStreamService {
                 ? 60L : pushProperties.getReconnectGraceSeconds();
         long elapsed = Duration.between(session.getEndTime(), now).getSeconds();
         return elapsed >= 0 && elapsed <= graceSeconds;
+    }
+
+    /**
+     * 事务提交后再推送，避免订阅端收到尚未落库的状态
+     */
+    private void publishAfterCommit(Long roomId, Map<String, Object> frame) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    liveStatusEventPublisher.publish(roomId, frame);
+                }
+            });
+        } else {
+            liveStatusEventPublisher.publish(roomId, frame);
+        }
+    }
+
+    private Map<String, Object> liveRecoveringFrame(LiveSession session, long graceSeconds) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("roomId", session.getRoomId());
+        data.put("sessionId", session.getId());
+        data.put("graceSeconds", graceSeconds);
+        Map<String, Object> frame = new LinkedHashMap<>();
+        frame.put("type", FRAME_RECOVERING);
+        frame.put("data", data);
+        return frame;
+    }
+
+    private Map<String, Object> liveResumedFrame(Long roomId, Long sessionId,
+                                                 LocalDateTime startTime) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("roomId", roomId);
+        data.put("sessionId", sessionId);
+        data.put("startTime", startTime.toString());
+        Map<String, Object> frame = new LinkedHashMap<>();
+        frame.put("type", FRAME_RESUMED);
+        frame.put("data", data);
+        return frame;
+    }
+
+    private Map<String, Object> liveEndFrame(LiveEnded ended) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("roomId", ended.roomId());
+        data.put("sessionId", ended.sessionId());
+        data.put("endReason", ended.endReason());
+        data.put("duration", ended.duration());
+        data.put("endTime", ended.endTime().toString());
+        Map<String, Object> frame = new LinkedHashMap<>();
+        frame.put("type", FRAME_END);
+        frame.put("data", data);
+        return frame;
+    }
+
+    /**
+     * 场次结束结果，用于事务提交后的状态广播
+     */
+    private record LiveEnded(Long roomId, Long sessionId,
+                             Integer endReason, Integer duration, LocalDateTime endTime) {
     }
 
     private void releaseLock(String streamName, String clientId) {

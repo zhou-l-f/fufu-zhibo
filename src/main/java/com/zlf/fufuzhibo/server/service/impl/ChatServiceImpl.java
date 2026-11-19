@@ -1,6 +1,5 @@
 package com.zlf.fufuzhibo.server.service.impl;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.zlf.fufuzhibo.common.constant.ErrorCode;
 import com.zlf.fufuzhibo.common.constant.LiveStatusConstant;
 import com.zlf.fufuzhibo.common.constant.MessageConstant;
@@ -19,31 +18,61 @@ import com.zlf.fufuzhibo.server.service.ChatService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
 /**
- * 聊天消息：发言先落库，再写入 Redis 最近消息列表；历史消息按 id 游标回源数据库
+ * 聊天消息：以直播场次为维度，发言只写 Redis（最近消息 + 缓冲队列）并立即广播，
+ * 由定时任务批量落库，避免每条消息一次 MySQL 写入
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class ChatServiceImpl implements ChatService {
 
-    /**
-     * 最近消息缓存键：live:chat:{roomId}，列表头为最新一条
-     */
-    private static final String RECENT_KEY_PREFIX = "live:chat:";
+    private static final ZoneId ZONE = ZoneId.of("Asia/Shanghai");
 
     /**
-     * 发言限流键：live:chat:limit:{roomId}:{userId}
+     * 场次最近消息缓存：live:chat:recent:{sessionId}，列表头为最新一条
+     */
+    private static final String RECENT_KEY_PREFIX = "live:chat:recent:";
+
+    /**
+     * 发言限流键：live:chat:limit:{sessionId}:{userId}
      */
     private static final String LIMIT_KEY_PREFIX = "live:chat:limit:";
+
+    /**
+     * 场次内消息序号：live:chat:seq:{sessionId}
+     */
+    private static final String SEQ_KEY_PREFIX = "live:chat:seq:";
+
+    /**
+     * 待落库消息缓冲区：live:chat:pending，右进左出保证顺序
+     */
+    public static final String BUFFER_KEY = "live:chat:pending";
+
+    /**
+     * 序号键过期时间，每次生成序号时刷新，避免场次结束后残留
+     */
+    private static final long SEQ_TTL_SECONDS = Duration.ofDays(7).toSeconds();
+
+    /**
+     * INCR 与 EXPIRE 合成一次调用，减少往返
+     */
+    private static final DefaultRedisScript<Long> NEXT_SEQ_SCRIPT = new DefaultRedisScript<>(
+            "local v = redis.call('incr', KEYS[1]) "
+                    + "redis.call('expire', KEYS[1], ARGV[1]) "
+                    + "return v",
+            Long.class);
 
     private static final int MAX_PAGE_SIZE = 50;
     private static final int MESSAGE_STATUS_NORMAL = 1;
@@ -57,7 +86,7 @@ public class ChatServiceImpl implements ChatService {
     private final ChatProperties chatProperties;
 
     @Override
-    public ChatMessageVO sendMessage(Long roomId, Long userId, String content) {
+    public ChatMessageVO sendMessage(Long roomId, Long sessionId, Long userId, String content) {
         String text = content == null ? "" : content.trim();
         int maxLength = chatProperties.getMaxLength();
         if (text.isEmpty()) {
@@ -68,13 +97,24 @@ public class ChatServiceImpl implements ChatService {
                     String.format(MessageConstant.CHAT_CONTENT_TOO_LONG, maxLength));
         }
 
-        // 仅直播中的房间可发言，与详情接口保持一致的错误码
-        LiveRoom room = liveRoomMapper.selectById(roomId);
-        if (room == null || !LiveStatusConstant.ROOM_LIVE.equals(room.getStatus())) {
-            throw new BaseException(ErrorCode.LIVE_ROOM_NOT_FOUND);
+        // 场次必须属于该直播间，且尚未彻底结束（待开播与直播中都可聊天）
+        LiveSession session = liveSessionMapper.selectById(sessionId);
+        if (session == null || !roomId.equals(session.getRoomId())) {
+            throw new BaseException(MessageConstant.CHAT_SESSION_INVALID);
+        }
+        if (LiveStatusConstant.SESSION_ENDED.equals(session.getStatus())) {
+            throw new BaseException(MessageConstant.CHAT_SESSION_ENDED);
         }
 
-        tryAcquireRateLimit(roomId, userId);
+        LiveRoom room = liveRoomMapper.selectById(roomId);
+        if (room == null) {
+            throw new BaseException(ErrorCode.LIVE_ROOM_NOT_FOUND);
+        }
+        if (LiveStatusConstant.ROOM_BANNED.equals(room.getStatus())) {
+            throw new BaseException(MessageConstant.CHAT_ROOM_BANNED);
+        }
+
+        tryAcquireRateLimit(sessionId, userId);
 
         User user = userMapper.selectById(userId);
         if (user == null) {
@@ -83,45 +123,59 @@ public class ChatServiceImpl implements ChatService {
 
         LiveMessage message = new LiveMessage();
         message.setRoomId(roomId);
-        message.setSessionId(findLiveSessionId(roomId));
+        message.setSessionId(sessionId);
+        message.setSeq(nextSeq(sessionId));
         message.setUserId(userId);
         message.setContent(filterSensitiveWords(text));
         message.setStatus(MESSAGE_STATUS_NORMAL);
-        liveMessageMapper.insert(message);
+        message.setCreateTime(LocalDateTime.now(ZONE));
 
         ChatMessageVO vo = toVO(message, user);
-        cacheRecent(vo);
+        // 先入缓冲区保证可落库，再写最近消息缓存
+        enqueue(message);
+        cacheRecent(sessionId, vo);
         return vo;
     }
 
     @Override
-    public List<ChatMessageVO> listHistory(Long roomId, Long lastId, int size) {
+    public List<ChatMessageVO> listHistory(Long roomId, Long sessionId, Long lastSeq, int size) {
+        LiveSession session = liveSessionMapper.selectById(sessionId);
+        if (session == null || !roomId.equals(session.getRoomId())) {
+            throw new BaseException(MessageConstant.CHAT_SESSION_INVALID);
+        }
+
         int limit = Math.max(1, Math.min(size, MAX_PAGE_SIZE));
-        List<ChatMessageVO> records = liveMessageMapper.selectHistory(roomId, lastId, limit);
+        List<ChatMessageVO> records = liveMessageMapper.selectHistory(sessionId, lastSeq, limit);
         if (records == null || records.isEmpty()) {
             return new ArrayList<>();
         }
-        // 数据库按 id 倒序取最新一页，返回给前端时翻转为正序
+        // 数据库按 seq 倒序取最新一页，返回给前端时翻转为正序
         List<ChatMessageVO> ordered = new ArrayList<>(records);
         Collections.reverse(ordered);
         return ordered;
     }
 
     @Override
-    public List<ChatMessageVO> listRecent(Long roomId, int size) {
+    public List<ChatMessageVO> listRecent(Long sessionId, int size) {
         int limit = Math.max(1, Math.min(size, chatProperties.getRecentSize()));
-        List<ChatMessageVO> cached = readRecentCache(roomId, limit);
+        List<ChatMessageVO> cached = readRecentCache(sessionId, limit);
         if (!cached.isEmpty()) {
             return cached;
         }
-        return listHistory(roomId, null, limit);
+        List<ChatMessageVO> records = liveMessageMapper.selectHistory(sessionId, null, limit);
+        if (records == null || records.isEmpty()) {
+            return new ArrayList<>();
+        }
+        List<ChatMessageVO> ordered = new ArrayList<>(records);
+        Collections.reverse(ordered);
+        return ordered;
     }
 
     /**
-     * Redis SET NX EX 限流；Redis 不可用时放行，避免聊天整体不可用
+     * Redis SET NX EX 限流，按场次维度隔离；Redis 不可用时放行，避免聊天整体不可用
      */
-    private void tryAcquireRateLimit(Long roomId, Long userId) {
-        String key = LIMIT_KEY_PREFIX + roomId + ":" + userId;
+    private void tryAcquireRateLimit(Long sessionId, Long userId) {
+        String key = LIMIT_KEY_PREFIX + sessionId + ":" + userId;
         try {
             Boolean acquired = stringRedisTemplate.opsForValue()
                     .setIfAbsent(key, "1",
@@ -136,14 +190,19 @@ public class ChatServiceImpl implements ChatService {
         }
     }
 
-    private Long findLiveSessionId(Long roomId) {
-        LiveSession session = liveSessionMapper.selectOne(
-                new LambdaQueryWrapper<LiveSession>()
-                        .eq(LiveSession::getRoomId, roomId)
-                        .eq(LiveSession::getStatus, LiveStatusConstant.SESSION_LIVE)
-                        .orderByDesc(LiveSession::getId)
-                        .last("LIMIT 1"));
-        return session == null ? null : session.getId();
+    private long nextSeq(Long sessionId) {
+        String key = SEQ_KEY_PREFIX + sessionId;
+        try {
+            Long seq = stringRedisTemplate.execute(
+                    NEXT_SEQ_SCRIPT, List.of(key), String.valueOf(SEQ_TTL_SECONDS));
+            if (seq == null) {
+                throw new IllegalStateException("序号生成返回空");
+            }
+            return seq;
+        } catch (Exception e) {
+            log.error("生成消息序号失败: sessionId={}", sessionId, e);
+            throw new BaseException(MessageConstant.CHAT_SEND_FAILED);
+        }
     }
 
     private String filterSensitiveWords(String text) {
@@ -161,27 +220,41 @@ public class ChatServiceImpl implements ChatService {
         return filtered;
     }
 
-    private void cacheRecent(ChatMessageVO vo) {
-        String key = RECENT_KEY_PREFIX + vo.getRoomId();
+    /**
+     * 消息放入 Redis 缓冲队列，由定时任务批量写入 MySQL
+     */
+    private void enqueue(LiveMessage message) {
+        try {
+            stringRedisTemplate.opsForList()
+                    .rightPush(BUFFER_KEY, jsonMapper.writeValueAsString(message));
+        } catch (Exception e) {
+            log.error("写入聊天缓冲区失败: sessionId={}, seq={}",
+                    message.getSessionId(), message.getSeq(), e);
+            throw new BaseException(MessageConstant.CHAT_SEND_FAILED);
+        }
+    }
+
+    private void cacheRecent(Long sessionId, ChatMessageVO vo) {
+        String key = RECENT_KEY_PREFIX + sessionId;
         try {
             stringRedisTemplate.opsForList().leftPush(key, jsonMapper.writeValueAsString(vo));
             stringRedisTemplate.opsForList().trim(key, 0, chatProperties.getRecentSize() - 1L);
             stringRedisTemplate.expire(key, Duration.ofHours(chatProperties.getCacheHours()));
         } catch (Exception e) {
-            log.warn("写入最近消息缓存失败: roomId={}, error={}", vo.getRoomId(), e.getMessage());
+            log.warn("写入最近消息缓存失败: sessionId={}, error={}", sessionId, e.getMessage());
         }
     }
 
     /**
      * 读取 Redis 最近消息并翻转为正序；缓存异常或无数据时返回空列表
      */
-    private List<ChatMessageVO> readRecentCache(Long roomId, int limit) {
-        String key = RECENT_KEY_PREFIX + roomId;
+    private List<ChatMessageVO> readRecentCache(Long sessionId, int limit) {
+        String key = RECENT_KEY_PREFIX + sessionId;
         List<String> values;
         try {
             values = stringRedisTemplate.opsForList().range(key, 0, limit - 1L);
         } catch (Exception e) {
-            log.warn("读取最近消息缓存失败: roomId={}, error={}", roomId, e.getMessage());
+            log.warn("读取最近消息缓存失败: sessionId={}, error={}", sessionId, e.getMessage());
             return List.of();
         }
         if (values == null || values.isEmpty()) {
@@ -193,7 +266,7 @@ public class ChatServiceImpl implements ChatService {
             try {
                 messages.add(jsonMapper.readValue(value, ChatMessageVO.class));
             } catch (Exception e) {
-                log.warn("最近消息缓存解析失败: roomId={}, error={}", roomId, e.getMessage());
+                log.warn("最近消息缓存解析失败: sessionId={}, error={}", sessionId, e.getMessage());
             }
         }
         Collections.reverse(messages);
@@ -203,6 +276,7 @@ public class ChatServiceImpl implements ChatService {
     private ChatMessageVO toVO(LiveMessage message, User user) {
         ChatMessageVO vo = new ChatMessageVO();
         vo.setId(message.getId());
+        vo.setSeq(message.getSeq());
         vo.setRoomId(message.getRoomId());
         vo.setSessionId(message.getSessionId());
         vo.setUserId(message.getUserId());

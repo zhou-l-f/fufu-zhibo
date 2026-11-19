@@ -40,4 +40,7 @@ public class MessageConstant {
     public static final String CHAT_TOO_FREQUENT = "发言过于频繁，请稍后再试";
     public static final String CHAT_TYPE_UNSUPPORTED = "不支持的消息类型";
     public static final String CHAT_SEND_FAILED = "消息发送失败，请稍后重试";
+    public static final String CHAT_SESSION_INVALID = "直播场次不存在或不属于该直播间";
+    public static final String CHAT_SESSION_ENDED = "本场直播已结束，无法发言";
+    public static final String CHAT_ROOM_BANNED = "直播间已被封禁，无法发言";
 }

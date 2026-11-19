@@ -17,7 +17,7 @@ public class LiveSessionEndTask {
 
     private final LiveStreamService liveStreamService;
 
-    @Scheduled(fixedDelayString = "${fufu.push.end-scan-interval-ms:5000}")
+    @Scheduled(fixedDelayString = "${fufu.push.end-scan-interval-ms:10000}")
     public void finalizeExpiredSessions() {
         try {
             int closed = liveStreamService.finalizePendingEnds();

@@ -33,17 +33,20 @@ public class PublicChatController {
     private final ChatService chatService;
 
     @Operation(summary = "查询聊天历史",
-            description = "按消息 id 游标向前翻页，返回结果按时间正序。首次不传 lastId 返回最新一页；"
-                    + "继续上翻时传当前最早一条消息的 id 作为 lastId。")
+            description = "聊天按直播场次隔离，sessionId 必传（可从直播间详情的 sessionId 获取）。"
+                    + "按场次内 seq 游标向前翻页，返回结果按时间正序。首次不传 lastSeq 返回最新一页；"
+                    + "继续上翻时传当前最早一条消息的 seq 作为 lastSeq。")
     @GetMapping("/{roomId}/messages")
     public Result<List<ChatMessageVO>> listMessages(
             @PathVariable @Positive(message = "直播间 id 不合法") Long roomId,
+            @RequestParam @Positive(message = "直播场次 id 不合法") Long sessionId,
             @RequestParam(required = false)
-            @Positive(message = "消息游标不合法") Long lastId,
+            @Positive(message = "消息游标不合法") Long lastSeq,
             @RequestParam(defaultValue = "20")
             @Min(value = 1, message = "每页条数不能小于 1")
             @Max(value = 50, message = "每页条数不能超过 50") Integer size) {
-        log.info("查询聊天历史: roomId={}, lastId={}, size={}", roomId, lastId, size);
-        return Result.success(chatService.listHistory(roomId, lastId, size));
+        log.info("查询聊天历史: roomId={}, sessionId={}, lastSeq={}, size={}",
+                roomId, sessionId, lastSeq, size);
+        return Result.success(chatService.listHistory(roomId, sessionId, lastSeq, size));
     }
 }

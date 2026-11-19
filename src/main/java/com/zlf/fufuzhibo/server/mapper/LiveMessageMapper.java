@@ -12,13 +12,21 @@ import java.util.List;
 public interface LiveMessageMapper extends BaseMapper<LiveMessage> {
 
     /**
-     * 按消息 id 游标向前翻页查询正常消息，结果按 id 倒序
+     * 按场次内的 seq 游标向前翻页查询正常消息，结果按 seq 倒序
      *
-     * @param roomId 直播间 id
-     * @param lastId 游标，仅返回 id 小于该值的消息，为空时返回最新的一页
-     * @param size   条数
+     * @param sessionId 直播场次 id，消息按场次隔离
+     * @param lastSeq   游标，仅返回 seq 小于该值的消息，为空时返回最新的一页
+     * @param size      条数
      */
-    List<ChatMessageVO> selectHistory(@Param("roomId") Long roomId,
-                                      @Param("lastId") Long lastId,
+    List<ChatMessageVO> selectHistory(@Param("sessionId") Long sessionId,
+                                      @Param("lastSeq") Long lastSeq,
                                       @Param("size") int size);
+
+    /**
+     * 批量写入聊天消息，依赖唯一索引 (session_id, seq) 做幂等
+     *
+     * @param messages 待写入消息，调用方保证非空
+     * @return 实际写入行数
+     */
+    int insertBatch(@Param("list") List<LiveMessage> messages);
 }

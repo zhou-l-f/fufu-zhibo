@@ -13,13 +13,16 @@ import java.time.LocalDateTime;
 @Schema(name = "ChatMessageVO", description = "直播间聊天消息")
 public class ChatMessageVO implements Serializable {
 
-    @Schema(description = "消息 id")
+    @Schema(description = "消息 id，批量入库前可能为空，前端不要用于排序")
     private Long id;
+
+    @Schema(description = "场次内消息序号，自增且连续，作为历史分页游标")
+    private Long seq;
 
     @Schema(description = "直播间 id")
     private Long roomId;
 
-    @Schema(description = "所属直播场次 id，可为空")
+    @Schema(description = "所属直播场次 id")
     private Long sessionId;
 
     @Schema(description = "发言用户 id")

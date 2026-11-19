@@ -44,4 +44,9 @@ public class ChatProperties {
      * 敏感词，命中后按字符数替换为 *
      */
     private List<String> sensitiveWords = new ArrayList<>();
+
+    /**
+     * 单次批量入库的最大消息条数
+     */
+    private Integer flushBatchSize = 500;
 }
