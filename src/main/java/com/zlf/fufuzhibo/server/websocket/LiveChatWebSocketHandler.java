@@ -4,6 +4,7 @@ import com.zlf.fufuzhibo.common.constant.MessageConstant;
 import com.zlf.fufuzhibo.common.exception.BaseException;
 import com.zlf.fufuzhibo.common.properties.ChatProperties;
 import com.zlf.fufuzhibo.pojo.vo.ChatMessageVO;
+import com.zlf.fufuzhibo.server.event.LiveStatusEventPublisher;
 import com.zlf.fufuzhibo.server.service.ChatService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -43,6 +44,7 @@ public class LiveChatWebSocketHandler extends TextWebSocketHandler {
     private final ChatProperties chatProperties;
     private final JsonMapper jsonMapper;
     private final LiveRoomSessionRegistry sessionRegistry;
+    private final LiveStatusEventPublisher liveStatusEventPublisher;
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
@@ -102,8 +104,9 @@ public class LiveChatWebSocketHandler extends TextWebSocketHandler {
             Map<String, Object> frame = new LinkedHashMap<>();
             frame.put("type", TYPE_CHAT);
             frame.put("data", vo);
+            // 经 Redis Pub/Sub 扇出到所有实例，避免多实例部署时各实例观众收不到彼此的弹幕；
             // 仍按直播间广播，前端用 data.sessionId 过滤，避免场次切换瞬间串消息
-            sessionRegistry.broadcast(roomId, frame);
+            liveStatusEventPublisher.publish(roomId, frame);
         } catch (BaseException e) {
             sendError(session, e.getMessage());
         } catch (Exception e) {
