@@ -171,18 +171,25 @@ public class LiveStreamServiceImpl implements LiveStreamService {
             throw new BaseException(MessageConstant.LIVE_SESSION_MISMATCH);
         }
 
-        // Redis 并发控制：一个直播间同一时刻只允许一路推流
+        // Redis 并发控制：一个直播间同一时刻只允许一路推流；Redis 不可用时降级为数据库条件更新
         String lockKey = PUBLISH_LOCK_PREFIX + streamName;
-        Boolean locked = stringRedisTemplate.opsForValue()
-                .setIfAbsent(lockKey, clientId, PUBLISH_LOCK_TTL);
-        if (!Boolean.TRUE.equals(locked)) {
-            String holder = stringRedisTemplate.opsForValue().get(lockKey);
-            if (!clientId.equals(holder)) {
-                throw new BaseException(MessageConstant.PUSH_STREAM_OCCUPIED);
+        try {
+            Boolean locked = stringRedisTemplate.opsForValue()
+                    .setIfAbsent(lockKey, clientId, PUBLISH_LOCK_TTL);
+            if (!Boolean.TRUE.equals(locked)) {
+                String holder = stringRedisTemplate.opsForValue().get(lockKey);
+                if (!clientId.equals(holder)) {
+                    throw new BaseException(MessageConstant.PUSH_STREAM_OCCUPIED);
+                }
+                // 同一 clientId 的重复回调：继续完成场次落库，避免上次提交失败后状态一直停在待开播
+                log.info("on_publish 重复回调，锁已由同一 clientId 持有，继续落库: stream={}, clientId={}",
+                        streamName, clientId);
             }
-            // 同一 clientId 的重复回调：继续完成场次落库，避免上次提交失败后状态一直停在待开播
-            log.info("on_publish 重复回调，锁已由同一 clientId 持有，继续落库: stream={}, clientId={}",
-                    streamName, clientId);
+        } catch (BaseException e) {
+            throw e;
+        } catch (Exception e) {
+            log.warn("推流锁不可用，降级为数据库条件更新: stream={}, clientId={}, error={}",
+                    streamName, clientId, e.getMessage());
         }
 
         // 事务未提交成功时释放推流锁，避免提交阶段失败后锁残留 24 小时导致后续无法推流
