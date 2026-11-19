@@ -427,13 +427,25 @@ public class LiveStreamServiceImpl implements LiveStreamService {
             duration = (int) Math.max(seconds, 0);
         }
 
-        LiveSession sessionUpdate = new LiveSession();
-        sessionUpdate.setId(session.getId());
-        sessionUpdate.setStatus(LiveStatusConstant.SESSION_ENDED);
-        sessionUpdate.setEndTime(now);
-        sessionUpdate.setEndReason(endReason);
-        sessionUpdate.setDuration(duration);
-        liveSessionMapper.updateById(sessionUpdate);
+        // 条件更新：状态与 clientId 都未变化才结束，避免与宽限期内重连接管并发时误结束新连接
+        LambdaUpdateWrapper<LiveSession> sessionUpdate = Wrappers.<LiveSession>lambdaUpdate()
+                .eq(LiveSession::getId, session.getId())
+                .eq(LiveSession::getStatus, session.getStatus())
+                .set(LiveSession::getStatus, LiveStatusConstant.SESSION_ENDED)
+                .set(LiveSession::getEndTime, now)
+                .set(LiveSession::getEndReason, endReason)
+                .set(LiveSession::getDuration, duration)
+                .set(LiveSession::getUpdateTime, now);
+        if (session.getClientId() == null) {
+            sessionUpdate.isNull(LiveSession::getClientId);
+        } else {
+            sessionUpdate.eq(LiveSession::getClientId, session.getClientId());
+        }
+        if (liveSessionMapper.update(null, sessionUpdate) != 1) {
+            log.info("结束直播：场次已被重连接管或已结束，跳过: userId={}, sessionId={}",
+                    userId, session.getId());
+            return;
+        }
 
         resetRoom(session, now);
 
