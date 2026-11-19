@@ -246,8 +246,12 @@ public class LiveStreamServiceImpl implements LiveStreamService {
             return;
         }
 
+        // 历史场次同样保留 client_id，SRS 重启后客户端 id 可能复用，必须只取最新一条
         LiveSession session = liveSessionMapper.selectOne(
-                Wrappers.<LiveSession>lambdaQuery().eq(LiveSession::getClientId, clientId));
+                Wrappers.<LiveSession>lambdaQuery()
+                        .eq(LiveSession::getClientId, clientId)
+                        .orderByDesc(LiveSession::getId)
+                        .last("LIMIT 1"));
         if (session == null) {
             log.warn("on_unpublish 未找到会话: clientId={}", clientId);
             releaseLock(callback.getStream(), clientId);
