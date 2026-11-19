@@ -11,6 +11,16 @@ public enum ErrorCode {
     PARAM_INVALID(40001, "请求参数不合法"),
 
     /**
+     * 未登录或登录态已过期
+     */
+    UNAUTHORIZED(40100, "未登录或登录已过期"),
+
+    /**
+     * 已登录但无权访问该资源
+     */
+    FORBIDDEN(40300, "无权访问该资源"),
+
+    /**
      * 直播间不存在或已下播
      */
     LIVE_ROOM_NOT_FOUND(40401, "直播间不存在或已下播"),

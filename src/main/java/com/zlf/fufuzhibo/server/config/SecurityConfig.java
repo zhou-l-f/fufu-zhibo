@@ -1,6 +1,8 @@
 package com.zlf.fufuzhibo.server.config;
 
+import com.zlf.fufuzhibo.common.constant.ErrorCode;
 import com.zlf.fufuzhibo.server.filter.JwtAuthenticationFilter;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -70,6 +72,15 @@ public class SecurityConfig {
                         .anyRequest().denyAll()
                 )
 
+                // 未认证与无权限统一返回 JSON，避免前端拿到空响应无法判断登录态
+                .exceptionHandling(exception -> exception
+                        .authenticationEntryPoint((request, response, authException) ->
+                                writeJson(response, HttpServletResponse.SC_UNAUTHORIZED,
+                                        ErrorCode.UNAUTHORIZED))
+                        .accessDeniedHandler((request, response, accessDeniedException) ->
+                                writeJson(response, HttpServletResponse.SC_FORBIDDEN,
+                                        ErrorCode.FORBIDDEN)))
+
                 .addFilterBefore(jwtAuthenticationFilter,
                         UsernamePasswordAuthenticationFilter.class);
 
@@ -79,6 +90,21 @@ public class SecurityConfig {
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
+    }
+
+    /**
+     * 直接写出统一格式的错误响应，异常发生在过滤器链中，无法经过全局异常处理器
+     */
+    private static void writeJson(HttpServletResponse response, int status, ErrorCode errorCode) {
+        response.setStatus(status);
+        response.setContentType("application/json;charset=UTF-8");
+        response.setCharacterEncoding("UTF-8");
+        try {
+            response.getWriter().write(String.format(
+                    "{\"code\":%d,\"msg\":\"%s\"}", errorCode.getCode(), errorCode.getMessage()));
+        } catch (Exception ignored) {
+            // 响应已中断时无需处理
+        }
     }
 
     /**
