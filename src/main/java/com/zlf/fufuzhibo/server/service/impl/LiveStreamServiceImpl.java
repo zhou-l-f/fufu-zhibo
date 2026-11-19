@@ -670,9 +670,10 @@ public class LiveStreamServiceImpl implements LiveStreamService {
 
     /**
      * 与 SRS 的在线流列表对账，回收回调丢失导致的僵尸场次
+     *
+     * <p>逐场使用独立事务：单场失败不会拖长或回滚整轮对账，也不会长时间占用数据库连接。
      */
     @Override
-    @Transactional
     public int reconcile(Set<String> activeStreams) {
         List<LiveSession> sessions = liveSessionMapper.selectList(
                 Wrappers.<LiveSession>lambdaQuery()
@@ -699,43 +700,60 @@ public class LiveStreamServiceImpl implements LiveStreamService {
                 continue;
             }
 
-            int duration = 0;
-            if (session.getStartTime() != null) {
-                long seconds = Duration.between(session.getStartTime(), now).getSeconds();
-                duration = (int) Math.max(seconds, 0);
-            }
-
-            // 条件更新：期间若已重连接管则放弃回收，避免误结束新连接
-            LambdaUpdateWrapper<LiveSession> sessionUpdate = Wrappers.<LiveSession>lambdaUpdate()
-                    .eq(LiveSession::getId, session.getId())
-                    .eq(LiveSession::getStatus, LiveStatusConstant.SESSION_LIVE)
-                    .set(LiveSession::getStatus, LiveStatusConstant.SESSION_ENDED)
-                    .set(LiveSession::getEndTime, now)
-                    .set(LiveSession::getDuration, duration)
-                    .set(LiveSession::getEndReason, LiveStatusConstant.END_REASON_TIMEOUT)
-                    .set(LiveSession::getUpdateTime, now);
-            if (session.getClientId() == null) {
-                sessionUpdate.isNull(LiveSession::getClientId);
-            } else {
-                sessionUpdate.eq(LiveSession::getClientId, session.getClientId());
-            }
-            if (liveSessionMapper.update(null, sessionUpdate) != 1) {
+            Boolean ended;
+            try {
+                ended = transactionTemplate.execute(status -> closeZombieSession(session, now));
+            } catch (Exception e) {
+                log.error("对账结束场次失败: stream={}, sessionId={}",
+                        session.getStreamName(), session.getId(), e);
                 continue;
             }
-
-            resetRoom(session, now);
-
-            releaseLock(session.getStreamName(), session.getClientId());
-            viewerCountService.clear(session.getStreamName());
-            clearPendingEnd(session.getStreamName());
-            closed++;
-            publishAfterCommit(session.getRoomId(), liveEndFrame(new LiveEnded(
-                    session.getRoomId(), session.getId(),
-                    LiveStatusConstant.END_REASON_TIMEOUT, duration, now)));
-            log.warn("对账回收僵尸场次: stream={}, sessionId={}, clientId={}",
-                    session.getStreamName(), session.getId(), session.getClientId());
+            if (Boolean.TRUE.equals(ended)) {
+                closed++;
+            }
         }
         return closed;
+    }
+
+    /**
+     * 结束单个僵尸场次：条件更新保证期间重连接管时不会误结束新连接
+     */
+    private boolean closeZombieSession(LiveSession session, LocalDateTime now) {
+        int duration = 0;
+        if (session.getStartTime() != null) {
+            long seconds = Duration.between(session.getStartTime(), now).getSeconds();
+            duration = (int) Math.max(seconds, 0);
+        }
+
+        // 条件更新：期间若已重连接管则放弃回收，避免误结束新连接
+        LambdaUpdateWrapper<LiveSession> sessionUpdate = Wrappers.<LiveSession>lambdaUpdate()
+                .eq(LiveSession::getId, session.getId())
+                .eq(LiveSession::getStatus, LiveStatusConstant.SESSION_LIVE)
+                .set(LiveSession::getStatus, LiveStatusConstant.SESSION_ENDED)
+                .set(LiveSession::getEndTime, now)
+                .set(LiveSession::getDuration, duration)
+                .set(LiveSession::getEndReason, LiveStatusConstant.END_REASON_TIMEOUT)
+                .set(LiveSession::getUpdateTime, now);
+        if (session.getClientId() == null) {
+            sessionUpdate.isNull(LiveSession::getClientId);
+        } else {
+            sessionUpdate.eq(LiveSession::getClientId, session.getClientId());
+        }
+        if (liveSessionMapper.update(null, sessionUpdate) != 1) {
+            return false;
+        }
+
+        resetRoom(session, now);
+
+        releaseLock(session.getStreamName(), session.getClientId());
+        viewerCountService.clear(session.getStreamName());
+        clearPendingEnd(session.getStreamName());
+        publishAfterCommit(session.getRoomId(), liveEndFrame(new LiveEnded(
+                session.getRoomId(), session.getId(),
+                LiveStatusConstant.END_REASON_TIMEOUT, duration, now)));
+        log.warn("对账回收僵尸场次: stream={}, sessionId={}, clientId={}",
+                session.getStreamName(), session.getId(), session.getClientId());
+        return true;
     }
 
     /**
