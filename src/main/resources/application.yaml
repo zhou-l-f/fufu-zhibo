@@ -77,6 +77,10 @@ fufu:
     rate-limit-seconds: ${fufu.chat.rate-limit-seconds:2}
     max-length: ${fufu.chat.max-length:100}
     cache-hours: ${fufu.chat.cache-hours:6}
+    # WebSocket 连接治理：单实例连接上限、心跳间隔、空闲超时
+    max-connections: 5000
+    heartbeat-interval-ms: 30000
+    idle-timeout-ms: 120000
 
   srs:
     callback-secret: ${fufu.srs.callback-secret}

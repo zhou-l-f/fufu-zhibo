@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
+import org.springframework.web.socket.PongMessage;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
@@ -54,7 +55,11 @@ public class LiveChatWebSocketHandler extends TextWebSocketHandler {
             close(session);
             return;
         }
-        sessionRegistry.register(roomId, session);
+        // 超过单实例连接上限时拒绝，避免连接数无限增长
+        if (!sessionRegistry.register(roomId, session)) {
+            close(session);
+            return;
+        }
 
         List<ChatMessageVO> recent = chatService.listRecent(sessionId, chatProperties.getInitSize());
         Map<String, Object> frame = new LinkedHashMap<>();
@@ -74,6 +79,7 @@ public class LiveChatWebSocketHandler extends TextWebSocketHandler {
             close(session);
             return;
         }
+        sessionRegistry.touch(session);
 
         JsonNode node;
         try {
@@ -119,6 +125,14 @@ public class LiveChatWebSocketHandler extends TextWebSocketHandler {
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         sessionRegistry.unregister(roomId(session), session);
+    }
+
+    /**
+     * 收到浏览器对服务端心跳的自动回复，刷新连接活跃时间
+     */
+    @Override
+    protected void handlePongMessage(WebSocketSession session, PongMessage message) {
+        sessionRegistry.touch(session);
     }
 
     @Override
