@@ -15,6 +15,9 @@ import com.zlf.fufuzhibo.server.mapper.LiveSessionMapper;
 import com.zlf.fufuzhibo.server.service.ChatService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.ListOperations;
+import org.springframework.data.redis.core.RedisOperations;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
@@ -243,9 +246,18 @@ public class ChatServiceImpl implements ChatService {
     private void cacheRecent(Long sessionId, ChatMessageVO vo) {
         String key = RECENT_KEY_PREFIX + sessionId;
         try {
-            stringRedisTemplate.opsForList().leftPush(key, jsonMapper.writeValueAsString(vo));
-            stringRedisTemplate.opsForList().trim(key, 0, chatProperties.getRecentSize() - 1L);
-            stringRedisTemplate.expire(key, Duration.ofHours(chatProperties.getCacheHours()));
+            String payload = jsonMapper.writeValueAsString(vo);
+            // 写入、裁剪、续期合并为一次 Pipeline，减少热点场次的 Redis 往返
+            stringRedisTemplate.executePipelined(new SessionCallback<Object>() {
+                @Override
+                public Object execute(RedisOperations operations) {
+                    ListOperations<String, String> list = operations.opsForList();
+                    list.leftPush(key, payload);
+                    list.trim(key, 0, chatProperties.getRecentSize() - 1L);
+                    operations.expire(key, Duration.ofHours(chatProperties.getCacheHours()));
+                    return null;
+                }
+            });
         } catch (Exception e) {
             log.warn("写入最近消息缓存失败: sessionId={}, error={}", sessionId, e.getMessage());
         }
